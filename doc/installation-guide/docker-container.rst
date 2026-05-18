@@ -1,0 +1,259 @@
+================
+Docker container
+================
+
+* `Basic concepts`_
+* `Basic installation`_
+* `Deployment of the Enterprise Edition`_
+* `Deployment with custom extension apps`_
+
+**************
+Basic concepts
+**************
+
+* | Container:
+  | A container is an isolated environment where you can run applications.
+  | This is very useful for software companies, because it allows them to focus on
+  | the software development and not on maintaining different versions of the software
+  | for different operating systems (and operating system versions).
+
+* | Image (in a Docker context):
+  | A Docker image is a package that includes everything you need to run your application.
+  | The image is defined in a template called dockerfile. This template defines the Operating System,
+  | environment variables used by applications, shared folders with the system where Docker is running, ...
+
+* | Docker:
+  | Docker is the application used to launch/run the containers. It reads a file that defines
+  | the container (OS, installed applications, environment variables, volumes, ...),
+  | and builds an image () according to that definition. Docker then launches/runs a container
+  | with that image.
+
+* | Docker-compose:
+  | Docker-compose is a level above Docker, it is an application that allows you to launch multiple
+  | (usually related to eachother) Docker containers.
+  | In our instructions you can have a docker-compose script that launces a ccAPPS container and a
+  | PostgreSQL database container (:doc:`advanced/docker-compose`).
+
+* | Kubernetes:
+  | Kuberbetes is a level above Docker-compose, it is a container orchestrator. It is used to separated
+  | and manage containers distributed across multiple servers.
+  | In our instructions you can find a kuberbetes script that launces a ccAPPS container and a
+  | PostgreSQL database container (:doc:`advanced/kubernetes`).
+
+Use one of the following command to bring the ccAPPS image to your local
+docker repository:
+
+******************
+Basic installation
+******************
+
+The first step towards a working ccAPPS application is the database installation.
+ccAPPS is developed and tested using PostgreSQL, other SQL database engines may be
+used but it is up to the user to support them.
+
+To install PostgreSQL just `download <https://www.postgresql.org/download/>`_ and follow the instructions relevant to your Operating System.
+
+There is also the more advanced option to also deploy PostgreSQL in a container with :doc:`advanced/docker-compose`.
+
+============================================
+Deployment with external PostgreSQL database
+============================================
+
+The example below creates a container that is using the PostgreSQL database installed on
+the Docker host server.
+The container is called ccAPPS-community-local, and you can access it with your browser
+on the URL http://localhost:9000/
+
+Use one of the following command to bring the ccAPPS image to your local
+docker repository:
+
+.. code-block:: none
+
+   # Login into github with your access token
+   docker login ghcr.io --username <github_user>
+
+   # Get the Community Edition
+   docker pull ghcr.io/ccAPPS/ccAPPS-community:latest
+
+   # Get the Enterprise Edition
+   docker pull ghcr.io/ccAPPS/ccAPPS-enterprise:latest
+
+| The container includes the ccAPPS planning software, plus a web server.
+| It does NOT include the required PostgreSQL database, which needs to provided
+  as a separate service: see below.
+
+The image can be extended and customized using the following:
+
+* The container exposes **port** 80 for HTTP access.
+
+* The following **environment variables** configure the access to the PostgreSQL database:
+
+    * | POSTGRES_HOST:
+      | Required. Points to IP address or name of the host running the database.
+
+    * | POSTGRES_PORT:
+      | TCP port of the database. Defaults to "5432".
+
+    * | POSTGRES_USER:
+      | Database role or user. Defaults to "ccAPPS".
+
+    * | POSTGRES_PASSWORD:
+      | Password for the database role or user. Defaults to "ccAPPS".
+
+    * | POSTGRES_DBNAME:
+      | Prefix to use for the database name.
+      | The default database names are "ccAPPS", "scenario1", "scenario2", "scenario3".
+      | If this argument is passed as "X", the database names will be "X0", "X1", "X2" and "X3".
+
+* The following **volumes** let you access all logs, configuration and license files:
+
+    * | /etc/ccAPPS:
+      | Contains the main configuration file djangosettings.py and the
+        license file license.xml (for the Enterprise Edition).
+
+    * | /etc/apache2:
+      | Configuration files of the apache web server.
+
+    * | /var/log/ccAPPS:
+      | Contains log files of the application.
+
+    * | /var/log/apache2:
+      | Log files of the web server.
+
+* The **entry point** of the container can be customized by placing files in the folder
+  /etc/ccAPPS/entrypoint.d
+
+* Custom code can be added (:doc:`advanced/custom-aoo`_) to the container by **inheriting from this image**. A section
+  below illustrates how this is done.
+
+.. code-block:: bash
+
+   docker run \
+     -e POSTGRES_HOST=host.docker.internal \
+     -e POSTGRES_PORT=5432 \
+     -e POSTGRES_USER=ccAPPS \
+     -e POSTGRES_PASSWORD=ccAPPS \
+     -e POSTGRES_DBNAME=ccAPPSdb \
+     --name ccAPPS-community-local \
+     --publish 9000:80 \
+     --restart always \
+     --detach \
+     ghcr.io/ccAPPS/ccAPPS-community:latest
+
+The following environment variables can be set to configure your container:
+
+.. code-block:: bash
+
+        POSTGRES_HOST: ""
+        POSTGRES_PORT: 5432
+        POSTGRES_USER: "ccAPPS"
+        POSTGRES_PASSWORD: "ccAPPS"
+        ccAPPS_DATE_STYLE: "year-month-day"
+        ccAPPS_DATE_STYLE_WITH_HOURS: "false"
+        ccAPPS_TIME_ZONE: "UTC"
+        ccAPPS_THEMES: "earth grass lemon odoo openbravo orange snow strawberry water"
+        ccAPPS_DEFAULT_THEME: "earth"
+        ccAPPS_EMAIL_USE_TLS: "true"
+        ccAPPS_DEFAULT_FROM_EMAIL: "your_email@domain.com"
+        ccAPPS_SERVER_EMAIL: "your_email@domain.com"
+        ccAPPS_EMAIL_HOST_USER: "your_email@domain.com"
+        ccAPPS_EMAIL_HOST_PASSWORD: "ccAPPSIsTheBest"
+        ccAPPS_EMAIL_HOST: ""
+        ccAPPS_EMAIL_PORT: 25
+        ccAPPS_CONTENT_SECURITY_POLICY: "frame-ancestors 'self'"
+        ccAPPS_X_FRAME_OPTIONS: "SAMEORIGIN"
+        ccAPPS_CSRF_TRUSTED_ORIGINS: ""
+        ccAPPS_SECURE_PROXY_SSL_HEADER: ""
+        ccAPPS_SESSION_COOKIE_SECURE: "false"
+        ccAPPS_CSRF_COOKIE_SAMESITE: "lax"
+        ccAPPS_FTP_PROTOCOL: "SFTP"
+        ccAPPS_FTP_HOST: ""
+        ccAPPS_FTP_PORT: 22
+        ccAPPS_FTP_USER: ""
+        ccAPPS_FTP_PASSWORD: ""
+        ccAPPS_AUTOSTART_WEBSERVICE: ""  # List of scenarios for which to automatically start the web service, separated by space
+
+************************************
+Deployment of the Enterprise Edition
+************************************
+
+The Enterprise Edition needs a license file to be copied into the container.
+This is handled by inheriting from the ccAPPS image.
+
+Create a new folder and copy the license file intofile:///mnt/dev/ccAPPS-enterprise-dev/build/doc/_build/html/ it. Also create
+a dockerfile in it with the following content:
+
+.. code-block:: docker
+
+   FROM ghcr.io/ccAPPS/ccAPPS-enterprise:latest
+
+   # Add the license key for the Enterprise Edition to the container
+   COPY license.xml /etc/ccAPPS
+
+Next, you build and your container with commands like:
+
+.. code-block:: bash
+
+   docker build my_ccAPPS -t -my_ccAPPS
+
+   docker run \
+     -e POSTGRES_HOST=host.docker.internal \
+     -e POSTGRES_PORT=5432 \
+     -e POSTGRES_USER=ccAPPS \
+     -e POSTGRES_PASSWORD=ccAPPS \
+     -e POSTGRES_DBNAME=ccAPPSdb \
+     --name my_ccAPPS \
+     --publish 9000:80 \
+     --restart always \
+     --detach \
+     my_ccAPPS
+
+The folder with the license file and the dockerfile are typically put under
+version control. A section below shows how this structure can be extended
+with custom apps or configurations.
+
+*******************************
+Running commands on a container
+*******************************
+
+It is possible to execute a ccAPPSctl command (or any linux command)
+on a running container.
+
+.. code-block:: bash
+
+   # Run a single command in the container
+   docker exec <container name> ccAPPSctl importfromfolder
+
+   # Run an interactive bash shell inside the container
+   docker exec -it <container name> /bin/bash
+
+
+*************************************
+Deployment with custom extension apps
+*************************************
+
+Extending the container with your own customizations is simple by inheriting from the ccAPPS
+image. Here is a an example dockerfile that adds a new ccAPPS app (coded as a Python package):
+
+.. code-block:: docker
+
+   FROM ghcr.io/ccAPPS/ccAPPS-enterprise:latest
+
+   # Copy the custom app. Apps in this folder are automatically detected
+   # and you can install them from the admin/apps screen.
+   # Please note that the python version in the instruction bellow could be different
+   COPY my-app /usr/share/ccAPPS/venv/lib/python3.12/site-packages/
+
+   # Add the license key for the Enterprise Edition to the container
+   COPY license.xml /etc/ccAPPS
+
+   # Install extra python packages
+   COPY requirements.txt /
+   RUN python3 -m pip install -r requirements.txt
+
+   # Update the djangosettings.py configuration file with extra settings
+   RUN echo "MYAPPSETTING=True" >> /etc/ccAPPS/djangosettings.py
+
+The folder with all customizations is typically put under
+version control. This allows a clear process for maintaining your custom code
+and upgrading to new ccAPPS releases.

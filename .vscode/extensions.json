@@ -1,0 +1,21 @@
+{
+  "recommendations": [
+    // C++
+    "ms-vscode.cpptools",
+    "twxs.cmake",
+    "ms-vscode.cmake-tools",
+    // Python
+    "ms-python.vscode-pylance",
+    "ms-python.black-formatter",
+    // Remote development
+    // "ms-vscode-remote.remote-ssh",
+    // "ms-vscode-remote.remote-wsl"
+    // Git
+    "mhutchie.git-graph",
+    "waderyan.gitblame",
+    // EditorConfig for VS Code
+    "editorconfig.editorconfig",
+    // CSV editing
+    "mechatroner.rainbow-csv"
+  ],
+}

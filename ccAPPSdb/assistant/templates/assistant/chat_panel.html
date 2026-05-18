@@ -1,0 +1,39 @@
+{% load i18n %}
+<div id="assistant-panel">
+  <div class="assistant-header">
+    <span class="assistant-header-title">
+      <span class="fa fa-comments"></span>
+      AI助手
+    </span>
+    <span class="fa fa-times assistant-close" id="assistant-close" title="关闭面板"></span>
+  </div>
+  <div id="assistant-messages" class="assistant-messages">
+    <div class="assistant-message assistant-message-system">
+      <div class="assistant-message-content">
+        你好！我是AI助手。我可以查看当前页面数据，帮你解答问题、导航操作和分析数据。
+      </div>
+    </div>
+  </div>
+  <div id="assistant-confirm" class="assistant-confirm-overlay">
+    <div class="assistant-confirm-box">
+      <div class="assistant-confirm-icon fa fa-robot"></div>
+      <div class="assistant-confirm-title">AI助手</div>
+      <div class="assistant-confirm-text">
+        为提供上下文帮助，AI助手会读取当前页面数据。AI生成的回复可能不完全准确，重要信息请独立核实。会话数据将由AI服务处理。<br><br>
+        <strong>注意：涉及 sudo、数据库删除、系统配置修改等高风险操作时，AI助手会先请求你的确认才会执行。</strong>
+      </div>
+      <button class="assistant-confirm-btn" onclick="assistantConfirm()">
+        我已了解，开始使用
+      </button>
+    </div>
+  </div>
+  <div class="assistant-input-area">
+    <textarea id="assistant-input" class="assistant-input" rows="2"
+      placeholder="输入你的问题..."
+      onkeydown="assistantKeyDown(event)"></textarea>
+    <button id="assistant-send" class="assistant-send" onclick="assistantSend()"
+      title="发送 (Enter)">
+      <span class="fa fa-paper-plane"></span>
+    </button>
+  </div>
+</div>

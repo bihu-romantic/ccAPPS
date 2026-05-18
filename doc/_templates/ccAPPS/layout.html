@@ -1,0 +1,69 @@
+{% extends "basic/layout.html" %}
+
+{%- block extrahead %}
+<link rel="stylesheet" href="{{ pathto('_static/jquery.modal.min.css', 1) }}" />
+<link rel="canonical" href="https://ccAPPS.com/docs/current/{{ pagename }}.php" />
+<script src="{{ pathto('_static/jquery.modal.min.js', 1) }}"></script>
+<script>
+$(function() {
+  $(".bodywrapper img").click(function(event) {
+    var popup = $('#popup');
+    popup.find("h4").text($(event.target).attr("alt"));
+    popup.find("img").attr("src", $(event.target).attr("src"));
+    popup.modal({fadeDuration: 250});
+    event.preventDefault();
+    return false;
+	});
+});
+</script>
+{% endblock %}
+
+{%- block relbar1 %}<div id="banner">
+<div id="site-title" role="banner"><a href="https://ccAPPS.com/" title="ccAPPS" rel="home">
+<img src="{{ pathto('_static/ccAPPS.svg', 1) }}" height="40" alt="ccAPPS"></a>
+</div>
+<div id="site-name">Community Edition {{ release }}</div>
+</div>
+<div id="header-end"><hr/></div>
+{% endblock %}
+
+{%- block content %}
+   <div class="document">
+
+   <!-- Sidebar with search field and table of contents -->
+    <div class="sphinxsidebar">
+    <form action="{{ pathto("search") }}" method="get" role="search">
+    <input id="search" type="search" placeholder="Search" name="q" value="" />
+    <span id="search-progress" style="padding-left: 10px"></span>
+    </form>
+    <h3><a href="{{ pathto(master_doc) }}">ccAPPS {{ release }}</a></h3>
+    {{ toctree() }}
+    </div>
+
+  {%- block document %}
+    <div class="documentwrapper">
+
+    <!-- Edit on github -->
+    <div style="float:right; text-align:center">
+    <a href="https://github.com/ccAPPS/ccAPPS/tree/master/doc/{{ pagename }}.rst" target="_blank">
+      <img style="vertical-align:middle; border:0; height:1em" alt="" src="{{ pathto('_static/github.png', 1) }}">
+      <span style="vertical-align:middle">Edit on github</span>
+    </a>
+    </div>
+
+    <!-- Main content -->
+    <div class="bodywrapper">
+      <div class="body" role="main">
+        {%- block body %} {% endblock %}
+      </div>
+    </div>
+  {%- endblock %}
+    <div class="clearer"></div>
+    </div>
+    <div id="popup" class="modal" style="max-width: inherit; margin-top: 50px">
+      <h4 class="modal-title"></h4>
+      <div><img src="" style="width:100%"></div>
+    </div>
+{%- endblock %}
+
+{%- block relbar2 %}{% endblock %}

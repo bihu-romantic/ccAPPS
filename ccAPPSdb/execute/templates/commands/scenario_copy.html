@@ -1,0 +1,260 @@
+{% load i18n %}
+<div class="position-relative">
+<div id="scenariotoast" class="toast top-0 start-50 translate-middle-x"
+  data-bs-delay="3000" role="alert" aria-live="assertive" aria-atomic="true">
+  <div class="toast-body bg-success">
+  <span class="text-white"></span>
+  </div>
+</div>
+</div>
+<div class="table-responsive">
+<table id="scenarios" style="width:100%" class="w-100 ">
+  <tr>
+      <td colspan='5' style="padding-left:15px">
+        <p>{% blocktrans %}You have a number of available scenario databases available.<br>
+        You can copy data into a scenario database to create a isolated sandbox for what-if analysis.<br>
+        Use the dropdown in the upper right corner of the screen to select which scenario you're working in.
+        {% endblocktrans %}</p>
+      </td>
+  </tr>
+  <tr>
+    <th style="padding:5px 10px 5px 10px; text-align: center">{% trans 'scenario'|capfirst %}</th>
+    <th style="padding:5px 10px 5px 10px; text-align: center">{% trans 'action'|capfirst %}</th>
+    <th style="padding:5px 10px 5px 10px; text-align: center">
+      <span data-bs-toggle="tooltip" data-bs-placement="top" data-bs-html="true"
+        data-bs-title="{% trans "<b>In use</b>: Contains data<br><b>Free</b>: Available to copy data into<br><b>Busy</b>: Data copy in progress" %}">
+      {% trans 'status'|capfirst %}
+      <span class="fa fa-question-circle"></span>
+      </span>
+    </th>
+    <th style="padding:5px 10px 5px 10px; text-align: center">
+      <span data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="{% trans "Label shown in the scenario dropdown list" %}">
+      {% trans 'label'|capfirst %}
+      <span class="fa fa-question-circle"></span>
+      </span></th>
+    {% if THEMES|length > 1 %}
+    <th style="padding:5px 10px 5px 10px; text-align: center">
+      <span data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="{% trans "Theme for this scenario" %}">
+      {% trans 'theme'|capfirst %}
+      <span class="fa fa-question-circle"></span>
+      </span>
+    </th>
+    {% endif %}
+  </tr>
+  {% for j in scenarios %}
+  {% if j.status == "Free" or j.name in active_scenarios %}
+  <tr>
+    <td style="padding:5px">
+      <strong>{{j.name|capfirst}}</strong>
+    </td>
+    <td style="padding:5px 10px 5px 10px">
+       {% if j.name != DEFAULT_DB_ALIAS and j.status == "Free" and perms.common.copy_scenario %}
+       <div class="btn-group btn-block">
+       <button class="btn btn-block btn-primary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+         {% trans 'manage'|capfirst %}&nbsp;<span class="caret"></span>
+       </button>
+       <ul class="dropdown-menu" role="menu">
+         <li><a class="dropdown-item scenariocopy" href="#" data-source="{{ current_database }}" data-bs-target="{{ j.name }}">
+           {% trans "Copy from" %} {{ current_database }}
+         </a></li>
+         {% for dump in dumps %}
+         <li><a class="dropdown-item scenariocopy" href="#" dumpfile="{{ dump }}" data-source="{{ current_database }}" data-bs-target="{{ j.name }}">{% trans "Restore from backup" %} {{ dump }}</a></li>
+         {% endfor%}
+       </ul>
+       </div>
+       {% elif j.name != DEFAULT_DB_ALIAS and j.status == 'In use'%}
+       {% if j.name in active_scenarios  %}
+       <div class="btn-group btn-block">
+       <button class="btn btn-block btn-primary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+         {% trans 'manage'|capfirst %}&nbsp;<span class="caret"></span>
+       </button>
+       <ul class="dropdown-menu" role="menu">
+         <li><a class="dropdown-item scenariorelease" href="#" data-bs-target="{{ j.name }}">
+         {% trans "Release: You will lose ALL data in this scenario!" %}
+         </a></li>
+         {% if current_database == j.name %}
+         <li><a class="dropdown-item scenariopromote" href="#" data-source="{{ j.name }}" data-bs-target="{{ DEFAULT_DB_ALIAS }}" >
+         {% trans "Promote: All data will be copied to Production" %}
+         </a></li>
+         {% endif %}
+       </ul>
+       </div>
+       {% endif %}
+       {% endif %}
+    </td>
+    <td style="padding:5px 10px 5px 10px; text-align: center">{% trans j.status|lower|capfirst %}</td>
+    <td style="padding:5px 10px 5px 10px">
+      <input class="form-control scenariolabel" type="text" data-bs-target="{{ j.name }}"
+      value="{{j.tag|escape}}">
+    </td>
+    {% if THEMES|length > 1 %}
+    <td style="padding:5px 10px 5px 10px; text-align: center">
+      <div id="themedropdown" class="dropdown" data-bs-target="{{ j.name }}">
+        <button class="form-control dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+          {% for sc, th in request.user.scenario_themes.items %}
+            {% if sc == j.name %}{{ th }}{% endif %}
+          {% endfor %}
+        </button>
+        <ul class="dropdown-menu w-100">
+          <li><a class="scenario_theme dropdown-item" data-theme="">{% trans 'default' %}</a></li>
+          {% for k in THEMES %}
+            <li><a class="scenario_theme dropdown-item" data-theme="{{ k }}">{{ k }}</a></li>
+          {% endfor %}
+        </ul>
+      </div>
+    </td>
+    {% endif %}
+  </tr>
+  {% endif %}
+  {% endfor %}
+{% if can_add_scenarios %}
+{% setting "MAX_NUMBER_OF_SCENARIOS" as max_scenarios %}
+<tr>
+  <td colspan="{% if THEMES|length > 1 %}5{% else %}4{% endif %}" style="padding: 10px; text-align: left;">
+      <button id="addScenarioBtn" class="btn btn-sm btn-primary" 
+        data-bs-toggle="tooltip" data-bs-placement="right" data-bs-offset="0,5"
+        data-bs-title="{% blocktranslate %}Add a new scenario (max {{ max_scenarios }}){% endblocktranslate %}">
+        <i class="fa fa-plus"></i>
+      </button>
+      <button id="removeScenarioBtn" class="btn btn-sm btn-primary"
+        data-bs-toggle="tooltip" data-bs-placement="right" data-bs-offset="0,5"
+        data-bs-title="{% trans 'Remove the last scenario' %}">
+        <i class="fa fa-minus"></i>
+      </button>
+  </td>
+</tr>
+{% endif %}
+</table>
+</div>
+
+<script>
+
+function handleScenarioAction(action) {
+  const isAdd = action === "add";
+  const $addBtn = $("#addScenarioBtn");
+  const $removeBtn = $("#removeScenarioBtn");
+
+  // Disable both buttons
+  $addBtn.prop("disabled", true);
+  $removeBtn.prop("disabled", true);
+
+  $.ajax({
+    url: `/default/execute/scenario_${action}/`,
+    type: "POST",
+    success: function () {
+      $("#scenariotoast span").text(`Launched ${action} scenario task`);
+      bootstrap.Toast.getOrCreateInstance($("#scenariotoast")[0], { delay: 5000 }).show();
+      // Reload the page. This can take while since the web server needs reloading.
+      setTimeout(function () {
+        location.reload(); 
+      }, 1000); 
+    },
+    error: function (xhr) {
+      const errorMsg = xhr.responseText || `An error occurred while ${action}ing scenario`;
+      $("#scenariotoast span").text(errorMsg);
+      bootstrap.Toast.getOrCreateInstance($("#scenariotoast")[0], { delay: 5000 }).show();
+
+      // Re-enable buttons
+      $addBtn.prop("disabled", false);
+      $removeBtn.prop("disabled", false);
+    }
+  });
+}
+
+$(".scenariorelease").on("click", function(event) {
+  event.preventDefault();
+  var releasedScenario = $(this).attr("data-bs-target");
+  var target = "/" + releasedScenario;
+  if (target == "/default")
+    target = "";
+  $.ajax({
+   url: target + "/execute/launch/scenario_copy/",
+   type: 'POST',
+   data: {release: 1, database:releasedScenario},
+   success: function() {
+     $("#scenariotoast span").text("Launched releasing task");
+     bootstrap.Toast.getOrCreateInstance($("#scenariotoast")[0]).show();
+     if (target == url_prefix) window.location.href = "/"; 
+   },
+   fail: function() {
+    console.log("FAILED");
+   }
+  });
+});
+$(".scenariopromote").on("click", function(event) {
+  event.preventDefault();
+  var source = "/" + $(this).attr("data-source");
+  $.ajax({
+   url: source + "/execute/launch/scenario_copy/",
+   type: 'POST',
+   data: {
+     promote: 1,
+     source: $(this).attr("data-source"),
+     destination: $(this).attr("data-bs-target")
+     },
+   success: function() {
+     $("#scenariotoast span").text("Launched promotion task");
+     bootstrap.Toast.getOrCreateInstance($("#scenariotoast")[0]).show();
+   },
+   fail: function() {
+    console.log("FAILED");
+   }});
+});
+$(".scenariocopy").on("click", function(event) {
+  event.preventDefault();
+  var source = "/" + $(this).attr("data-source");
+  if (source == "/default")
+    source = "";
+  $.ajax({
+   url: source + "/execute/launch/scenario_copy/",
+   type: 'POST',
+   data: {
+     copy: 1,
+     source: $(this).attr("data-source"),
+     destination: $(this).attr("data-bs-target"),
+     dumpfile: $(this).attr("dumpfile")
+     },
+   success: function() {
+     $("#scenariotoast span").text("Launched copy task");
+     bootstrap.Toast.getOrCreateInstance($("#scenariotoast")[0]).show();
+   }});
+});
+$(".scenariolabel").on("change", function(event) {
+  event.preventDefault();
+  $.ajax({
+   url: "/default/execute/launch/scenario_copy/",
+   type: 'POST',
+   data: {
+     update: 1,
+     scenario: $(this).attr("data-bs-target"),
+     description: $(this).val()
+     },
+   });
+});
+$(".scenario_theme").click(function() {
+  event.preventDefault();
+  var b = $(this);
+  $.ajax({
+   url: "/default/execute/launch/scenario_copy/",
+   type: 'POST',
+   data: {
+     scenario: b.closest("div").attr("data-bs-target"),
+     theme: b.attr("data-theme")
+     },
+   success: function() {
+     b.closest("div").children("button").text(b.attr("data-theme"));
+     if (database == b.closest("div").attr("data-bs-target"))
+       location.reload();
+    }
+   });
+});
+$("#addScenarioBtn").on("click", function (event) {
+  event.preventDefault();
+  handleScenarioAction("add");
+});
+
+$("#removeScenarioBtn").on("click", function (event) {
+  event.preventDefault();
+  handleScenarioAction("delete");
+});
+</script>
