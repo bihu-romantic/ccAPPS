@@ -1114,7 +1114,7 @@
     {
         "model": "input.operationmaterial",
         "fields": {
-            "quantity": 1.00000000,
+            "quantity": 1.0,
             "type": "end",
             "priority": 1,
             "item_id": "chair leg",
@@ -1124,7 +1124,7 @@
     {
         "model": "input.operationmaterial",
         "fields": {
-            "quantity": -1.00000000,
+            "quantity": -1.0,
             "type": "start",
             "priority": 1,
             "item_id": "wooden beam",
@@ -1134,7 +1134,7 @@
     {
         "model": "input.operationmaterial",
         "fields": {
-            "quantity": 1.00000000,
+            "quantity": 1.0,
             "type": "end",
             "priority": 1,
             "item_id": "table leg",
@@ -1144,7 +1144,7 @@
     {
         "model": "input.operationmaterial",
         "fields": {
-            "quantity": -1.00000000,
+            "quantity": -1.0,
             "type": "start",
             "priority": 1,
             "item_id": "wooden beam",
@@ -1154,7 +1154,7 @@
     {
         "model": "input.operationmaterial",
         "fields": {
-            "quantity": 1.00000000,
+            "quantity": 1.0,
             "type": "end",
             "priority": 1,
             "item_id": "square table",
@@ -1164,7 +1164,7 @@
     {
         "model": "input.operationmaterial",
         "fields": {
-            "quantity": 1.00000000,
+            "quantity": 1.0,
             "type": "end",
             "priority": 1,
             "item_id": "round table",
@@ -1174,7 +1174,7 @@
     {
         "model": "input.operationmaterial",
         "fields": {
-            "quantity": 1.00000000,
+            "quantity": 1.0,
             "type": "end",
             "priority": 1,
             "item_id": "chair",
@@ -1184,7 +1184,7 @@
     {
         "model": "input.operationmaterial",
         "fields": {
-            "quantity": -1.00000000,
+            "quantity": -1.0,
             "type": "start",
             "priority": 1,
             "item_id": "grinded wooden panel",
@@ -1194,7 +1194,7 @@
     {
         "model": "input.operationmaterial",
         "fields": {
-            "quantity": -1.00000000,
+            "quantity": -1.0,
             "type": "start",
             "priority": 1,
             "item_id": "grinded wooden panel",
@@ -1204,7 +1204,7 @@
     {
         "model": "input.operationmaterial",
         "fields": {
-            "quantity": -1.00000000,
+            "quantity": -1.0,
             "type": "start",
             "priority": 1,
             "item_id": "cushion",
@@ -1214,7 +1214,7 @@
     {
         "model": "input.operationmaterial",
         "fields": {
-            "quantity": -5.00000000,
+            "quantity": -5.0,
             "type": "start",
             "priority": 1,
             "item_id": "screws",
@@ -1224,7 +1224,7 @@
     {
         "model": "input.operationmaterial",
         "fields": {
-            "quantity": -10.00000000,
+            "quantity": -10.0,
             "type": "start",
             "priority": 1,
             "item_id": "screws",
@@ -1234,7 +1234,7 @@
     {
         "model": "input.operationmaterial",
         "fields": {
-            "quantity": -4.00000000,
+            "quantity": -4.0,
             "type": "start",
             "priority": 1,
             "item_id": "screws",
@@ -1244,7 +1244,7 @@
     {
         "model": "input.operationmaterial",
         "fields": {
-            "quantity": -4.00000000,
+            "quantity": -4.0,
             "type": "start",
             "priority": 1,
             "item_id": "table leg",
@@ -1254,7 +1254,7 @@
     {
         "model": "input.operationmaterial",
         "fields": {
-            "quantity": -4.00000000,
+            "quantity": -4.0,
             "type": "start",
             "priority": 1,
             "item_id": "table leg",
@@ -1264,7 +1264,7 @@
     {
         "model": "input.operationmaterial",
         "fields": {
-            "quantity": -4.00000000,
+            "quantity": -4.0,
             "type": "start",
             "priority": 1,
             "item_id": "chair leg",
@@ -1274,7 +1274,7 @@
     {
         "model": "input.operationmaterial",
         "fields": {
-            "quantity": 1.00000000,
+            "quantity": 1.0,
             "type": "end",
             "priority": 1,
             "item_id": "grinded wooden panel",
@@ -1284,7 +1284,7 @@
     {
         "model": "input.operationmaterial",
         "fields": {
-            "quantity": -1.00000000,
+            "quantity": -1.0,
             "type": "start",
             "priority": 1,
             "item_id": "wooden panel",
@@ -1294,7 +1294,7 @@
     {
         "model": "input.operationmaterial",
         "fields": {
-            "quantity": -1.00000000,
+            "quantity": -1.0,
             "type": "start",
             "priority": 1,
             "item_id": "chair",
@@ -1304,7 +1304,7 @@
     {
         "model": "input.operationmaterial",
         "fields": {
-            "quantity": 1.00000000,
+            "quantity": 1.0,
             "type": "end",
             "priority": 1,
             "item_id": "varnished chair",
@@ -2431,7 +2431,7 @@
             "name": "History 156",
             "due": "2019-02-01 00:00:00",
             "status": "closed",
-            "quantity": 55.50000000,
+            "quantity": 55.5,
             "priority": 1,
             "customer_id": "Customer near shop 2",
             "item_id": "varnished chair",
@@ -2444,7 +2444,7 @@
             "name": "History 157",
             "due": "2019-02-01 00:00:00",
             "status": "closed",
-            "quantity": 31.50000000,
+            "quantity": 31.5,
             "priority": 1,
             "customer_id": "Customer near shop 1",
             "item_id": "varnished chair",
@@ -2457,7 +2457,7 @@
             "name": "History 158",
             "due": "2019-03-01 00:00:00",
             "status": "closed",
-            "quantity": 43.50000000,
+            "quantity": 43.5,
             "priority": 1,
             "customer_id": "Customer near shop 1",
             "item_id": "varnished chair",
@@ -2509,7 +2509,7 @@
             "name": "History 161",
             "due": "2019-04-01 00:00:00",
             "status": "closed",
-            "quantity": 58.50000000,
+            "quantity": 58.5,
             "priority": 1,
             "customer_id": "Customer near shop 2",
             "item_id": "varnished chair",
@@ -2587,7 +2587,7 @@
             "name": "History 167",
             "due": "2019-07-01 00:00:00",
             "status": "closed",
-            "quantity": 56.50000000,
+            "quantity": 56.5,
             "priority": 1,
             "customer_id": "Customer near shop 2",
             "item_id": "varnished chair",
@@ -2665,7 +2665,7 @@
             "name": "History 172",
             "due": "2019-09-01 00:00:00",
             "status": "closed",
-            "quantity": 52.50000000,
+            "quantity": 52.5,
             "priority": 1,
             "customer_id": "Customer near shop 2",
             "item_id": "varnished chair",
@@ -2756,7 +2756,7 @@
             "name": "History 179",
             "due": "2020-01-01 00:00:00",
             "status": "closed",
-            "quantity": 1.50000000,
+            "quantity": 1.5,
             "priority": 1,
             "customer_id": "Customer near shop 2",
             "item_id": "varnished chair",
@@ -2886,7 +2886,7 @@
             "name": "History 188",
             "due": "2020-05-01 00:00:00",
             "status": "closed",
-            "quantity": 55.50000000,
+            "quantity": 55.5,
             "priority": 1,
             "customer_id": "Customer near shop 2",
             "item_id": "varnished chair",
@@ -3029,7 +3029,7 @@
             "name": "History 198",
             "due": "2020-10-01 00:00:00",
             "status": "closed",
-            "quantity": 36.50000000,
+            "quantity": 36.5,
             "priority": 1,
             "customer_id": "Customer near shop 2",
             "item_id": "varnished chair",
@@ -3120,7 +3120,7 @@
             "name": "History 203",
             "due": "2020-12-01 00:00:00",
             "status": "closed",
-            "quantity": 20.50000000,
+            "quantity": 20.5,
             "priority": 1,
             "customer_id": "Customer near shop 2",
             "item_id": "varnished chair",
@@ -4567,7 +4567,7 @@
         "fields": {
             "name": "plan.solver",
             "value": "heuristic",
-            "description": "Selects the solver to generate the plan. Possible choices are \"heuristic\" and \"distribution\"."
+            "description": "选择生成计划的求解器。可选值：heuristic（启发式）和 distribution（配送）。"
         }
     },
     {
@@ -4599,7 +4599,7 @@
         "fields": {
             "name": "NewStyleOrderEditing",
             "value": "false",
-            "description": "Select whether to use the web service (false, historical default) for plan editing, or new Python code (true). Default is false for backward compatibility."
+            "description": "选择使用 Web 服务（false，历史默认）还是新的 Python 代码（true）进行计划编辑。默认：false（保持向后兼容）。"
         }
     },
     {

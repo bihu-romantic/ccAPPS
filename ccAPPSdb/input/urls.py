@@ -335,6 +335,11 @@ if mode == "WSGI":
             name="supplypath_item",
         ),
         re_path(
+            r"^supplypath/embed/(.+)/$",
+            views.EmbedItemPath.as_view(),
+            name="supplypath_embed",
+        ),
+        re_path(
             r"^whereused/item/(.+)/$",
             views.DownstreamItemPath.as_view(),
             name="whereused_item",

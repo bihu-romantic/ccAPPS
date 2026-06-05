@@ -34,6 +34,21 @@ if mode == "WSGI":
     urlpatterns = [
         re_path(r"^execute/$", views.TaskReport.as_view(), name="execute"),
         re_path(
+            r"^execute/data/$",
+            views.data_management,
+            name="execute_data_management",
+        ),
+        re_path(
+            r"^execute/planningboard/$",
+            views.PlanEdit.as_view(),
+            name="execute_planningboard",
+        ),
+        re_path(
+            r"^execute/gantt/embed/$",
+            views.GanttEmbed.as_view(),
+            name="execute_gantt_embed",
+        ),
+        re_path(
             r"^execute/logccAPPS/(.+)/$",
             views.logfile,
             name="execute_view_log",

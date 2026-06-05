@@ -27,7 +27,7 @@
 angular.module('operationplandetailapp')
   .directive('showinventorygraphDrv', showinventorygraphDrv);
 
-showinventorygraphDrv.$inject = ['$window', '$filter', 'gettextCatalog', 'd3service'];
+showinventorygraphDrv.$inject = ['$window', '$filter', 'gettextCatalog'];
 
 function showinventorygraphDrv($window, $filter, gettextCatalog) {
   return {
@@ -36,6 +36,9 @@ function showinventorygraphDrv($window, $filter, gettextCatalog) {
 
   function linkfunc(scope, elem, attrs, d3service) {
     scope.$watchGroup(['operationplan.id', 'operationplan.inventoryreport.length'], function (newValue, oldValue) {
+      var fallbackContainer = $("#attributes-operationplan .card-body");
+      var fallbackHeight = fallbackContainer.length ? fallbackContainer.height() : 300;
+      var fallbackWidth = fallbackContainer.length ? fallbackContainer.width() : $("#attributes-inventorygraph").width();
       angular.element(document).find('#attributes-inventorygraph').empty().append(
         [
         '<div class="card-header d-flex align-items-center" data-bs-toggle="collapse" data-bs-target="#widget_inventorygraph" aria-expanded="false" aria-controls="widget_inventorygraph">',
@@ -46,7 +49,7 @@ function showinventorygraphDrv($window, $filter, gettextCatalog) {
         '" id="widget_inventorygraph">',
         '<table class="table table-sm table-borderless">',
         '<tbody><tr><td role="gridcell" aria-describedby="grid_graph">',
-        '<div class="graph" style="height:'+ $("#attributes-operationplan .card-body").height() +'"></div>',
+        '<div class="graph" style="height:'+ fallbackHeight +'px"></div>',
         '</td></tr></tbody>',
         '</table>',
         '</div>'
@@ -58,8 +61,8 @@ function showinventorygraphDrv($window, $filter, gettextCatalog) {
           const timebuckets = scope.operationplan.inventoryreport;
 
           let margin = {top: 10, right: 10, bottom: 30, left: 40};
-          let width = Math.max($("#attributes-operationplan .card-body").width() - margin.left - margin.right, 0);
-          let height = $("#attributes-operationplan .card-body").height() - margin.top - margin.bottom;
+          let width = Math.max(fallbackWidth - margin.left - margin.right, 0);
+          let height = fallbackHeight - margin.top - margin.bottom;
 
           // Define X-axis
           let bucketnamelength = 0;

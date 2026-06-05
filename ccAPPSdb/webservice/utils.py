@@ -134,7 +134,9 @@ def createSolvers(loglevel=2, database=DEFAULT_DB_ALIAS):
     except Exception:
         constraint = 4 + 16 + 32  # Default is with all constraints enabled
     clean_solver = ccAPPS.solver_delete(loglevel=loglevel, constraint=constraint)
-    mrp_solver = ccAPPS.solver_mrp(
+    from ccAPPSdb.common.models import Parameter
+    use_aco = Parameter.getValue("plan.solver", database, "aco").lower() != "heuristic"
+    mrp_solver = ccAPPS.solverACO(
         loglevel=loglevel,
         constraints=constraint,
         erasePreviousFirst=False,

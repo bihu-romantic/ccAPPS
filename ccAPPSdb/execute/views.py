@@ -207,6 +207,10 @@ class TaskReport(GridReport):
                     % (appname, commandname, e)
                 )
 
+        # Keep only planning/scenario commands on the main execute page
+        _keep_commands = {"runplan", "scheduletasks", "scenario_copy"}
+        all_commands = [c for c in all_commands if c["command"].name in _keep_commands]
+
         # Use the preferences
         commandlist1 = []
         commandlist2 = []
@@ -1737,3 +1741,625 @@ def exports(request):
     except Exception as e:
         logger.error("Error updating export: %s" % e)
         return HttpResponseServerError("Error updating export")
+
+
+from ccAPPSdb.input.models.operationplan import OperationPlan
+
+
+class PlanEdit(GridReport):
+    """Consolidated plan review and editing view across all operation plan types."""
+
+    template = "execute/planedit.html"
+    title = _("计划编辑器")
+    model = OperationPlan
+    basequeryset = (
+        OperationPlan.objects.all()
+        .filter(type__in=("MO", "PO", "DO", "DLVR"))
+        .exclude(status="closed")
+        .select_related("item", "location", "supplier", "operation")
+    )
+    editable = True
+    multiselect = True
+    frozenColumns = 1
+    height = 250
+    default_sort = (0, "asc")
+
+    rows = (
+        GridFieldText("reference", width=120),
+        GridFieldText("type", width=50, editable=False),
+        GridFieldText("item__name", width=150, editable=False),
+        GridFieldText("quantity", width=80),
+        GridFieldLocalDateTime("startdate", width=140),
+        GridFieldLocalDateTime("enddate", width=140),
+        GridFieldText("status", width=80, editable=False),
+        GridFieldDuration("delay", width=80, editable=False, initially_hidden=True),
+        GridFieldText("actions", width=80),
+        GridFieldText("demand__name", width=120, editable=False, initially_hidden=True),
+        GridFieldText(
+            "supplier__name", width=120, editable=False, initially_hidden=True
+        ),
+        GridFieldText(
+            "location__name", width=120, editable=False, initially_hidden=True
+        ),
+        GridFieldText("remark", width=150),
+        GridFieldLocalDateTime("due", width=140, initially_hidden=True),
+    )
+
+    @classmethod
+    def _generate_gantt_data(cls, request, *args, **kwargs):
+        request.prefs = request.user.getPreference(
+            cls.getKey(request, *args, **kwargs), database=request.database
+        )
+        board = request.GET.get("board", "resource")
+        try:
+            limit = int(request.GET.get("ganttlimit", 2000))
+        except (TypeError, ValueError):
+            limit = 2000
+        limit = min(max(limit, 1), 10000)
+
+        if callable(cls.basequeryset):
+            basequery = cls.basequeryset(request, *args, **kwargs)
+        else:
+            basequery = cls.basequeryset
+        query = cls.filter_items(request, basequery, False).using(request.database)
+        query = cls._apply_sort(request, query).prefetch_related(
+            "resources__resource__owner"
+        )
+        opplans = list(query[:limit])
+
+        def isoformat(dt):
+            return dt.isoformat() if dt else None
+
+        records = []
+        inventory = {}
+        pegging_links = []
+        filtered_groups = {}
+
+        demand_groups = {}
+
+        if board == "demand":
+
+            from ccAPPSdb.input.models.demand import Demand
+
+            from ccAPPSdb.input.models.operationplan import OperationPlanMaterial
+
+            mat_qs = list(
+                OperationPlanMaterial.objects.using(request.database)
+                .filter(flowdate__year__gte=2000)
+                .select_related("item", "location")
+                .order_by("flowdate", "-quantity")
+            )
+
+            all_op_refs = set(m.operationplan_id for m in mat_qs)
+            op_details = {}
+
+            if all_op_refs:
+                for op in (
+                    OperationPlan.objects.using(request.database)
+                    .filter(reference__in=list(all_op_refs))
+                    .select_related("item", "location", "supplier", "operation")
+                ):
+                    op_details[op.reference] = {
+                        "reference": op.reference,
+                        "type": op.type,
+                        "status": op.status or "",
+                        "name": op.name or "",
+                        "item": op.item_id or "",
+                        "item_name": op.item.name if op.item else "",
+                        "location": op.location_id or "",
+                        "location_name": (
+                            op.location.name if op.location else ""
+                        ),
+                        "quantity": (
+                            float(op.quantity) if op.quantity is not None else 0
+                        ),
+                        "startdate": isoformat(op.startdate),
+                        "enddate": isoformat(op.enddate),
+                        "supplier_name": (
+                            op.supplier.name if op.supplier else ""
+                        ),
+                        "operation_name": op.operation_id or "",
+                        "operation_category": (
+                            op.operation.category if op.operation else ""
+                        ),
+                        "delay": (
+                            op.delay.total_seconds() if op.delay else None
+                        ),
+                        "criticality": (
+                            float(op.criticality)
+                            if op.criticality is not None
+                            else None
+                        ),
+                        "demand_id": op.demand_id or "",
+                        "pegging": op.plan.get("pegging", {})
+                        if op.plan
+                        else {},
+                    }
+
+            demand_objs = {}
+            for d in (
+                Demand.objects.using(request.database)
+                .exclude(status__in=("closed", "canceled"))
+                .select_related("item", "location", "customer")
+            ):
+                demand_objs[d.name] = d
+
+            item_groups = {}
+            for m in mat_qs:
+                key = "%s @ %s" % (m.item_id, m.location_id)
+                if key not in item_groups:
+                    item_groups[key] = {"inventory": [], "demands": {}}
+
+                qty = float(m.quantity) if m.quantity is not None else 0
+                onhand = float(m.onhand) if m.onhand is not None else 0
+                op_ref = m.operationplan_id
+                has_date = m.flowdate and m.flowdate.year > 2000
+
+                op_detail = op_details.get(op_ref, {})
+                op_type = op_detail.get("type", "")
+                op_start = op_detail.get("startdate")
+                op_end = op_detail.get("enddate")
+                op_status = op_detail.get("status", "")
+
+                linked = []
+                if has_date:
+                    dname = op_detail.get("demand_id") or ""
+                    if dname:
+                        linked.append({"demand": dname, "qty": abs(qty)})
+                    peg = op_detail.get("pegging", {})
+                    for pdname, pqty in peg.items():
+                        if pdname != dname:
+                            linked.append(
+                                {
+                                    "demand": pdname,
+                                    "qty": float(pqty) if pqty else 0,
+                                }
+                            )
+
+                pt = {
+                    "op_ref": op_ref,
+                    "quantity": qty,
+                    "onhand": onhand,
+                    "date": isoformat(m.flowdate) if m.flowdate else None,
+                    "flowdate": isoformat(m.flowdate)
+                    if m.flowdate
+                    else None,
+                    "op_type": op_type,
+                    "op_status": op_status,
+                    "op_start": op_start,
+                    "op_end": op_end,
+                    "item_id": m.item_id,
+                    "location_id": m.location_id,
+                    "linked_demands": linked,
+                }
+                item_groups[key]["inventory"].append(pt)
+
+            for key, grp in item_groups.items():
+                seen_demands = {}
+                for pt in grp["inventory"]:
+                    for ld in pt["linked_demands"]:
+                        dname = ld["demand"]
+                        if dname not in seen_demands:
+                            seen_demands[dname] = {
+                                "supply_events": [],
+                                "consumption_events": [],
+                            }
+                        if pt["quantity"] < 0:
+                            seen_demands[dname]["consumption_events"].append(
+                                {
+                                    "op_ref": pt["op_ref"],
+                                    "qty": abs(ld["qty"]),
+                                    "date": pt["date"],
+                                    "op_type": pt.get("op_type") or "",
+                                    "op_status": pt.get("op_status") or "",
+                                    "op_start": pt.get("op_start"),
+                                    "op_end": pt.get("op_end"),
+                                    "op_item": op_details.get(
+                                        pt["op_ref"], {}
+                                    ).get("item_name", ""),
+                                    "operation_name": op_details.get(
+                                        pt["op_ref"], {}
+                                    ).get("operation_name", ""),
+                                    "operation_category": op_details.get(
+                                        pt["op_ref"], {}
+                                    ).get("operation_category", ""),
+                                }
+                            )
+                        elif pt["quantity"] > 0:
+                            seen_demands[dname]["supply_events"].append(
+                                {
+                                    "op_ref": pt["op_ref"],
+                                    "qty": ld["qty"],
+                                    "date": pt["date"],
+                                    "op_type": pt.get("op_type") or "",
+                                    "op_status": pt.get("op_status") or "",
+                                    "op_start": pt.get("op_start"),
+                                    "op_end": pt.get("op_end"),
+                                    "operation_name": op_details.get(
+                                        pt["op_ref"], {}
+                                    ).get("operation_name", ""),
+                                    "operation_category": op_details.get(
+                                        pt["op_ref"], {}
+                                    ).get("operation_category", ""),
+                                }
+                            )
+                for dname, events in seen_demands.items():
+                    d = demand_objs.get(dname)
+                    if d:
+                        grp["demands"][dname] = {
+                            "name": d.name,
+                            "due": isoformat(d.due) if d.due else None,
+                            "quantity": (
+                                float(d.quantity)
+                                if d.quantity is not None
+                                else 0
+                            ),
+                            "customer": d.customer_id or "",
+                            "item": d.item_id or "",
+                            "status": d.status or "",
+                            "mo_orders": events["consumption_events"],
+                            "supply_events": events["supply_events"],
+                        }
+
+            filtered_groups = {}
+            for key, grp in item_groups.items():
+                has_any = False
+                for pt in grp["inventory"]:
+                    if pt.get("date") and pt["date"].startswith("20"):
+                        has_any = True
+                        break
+                if not has_any:
+                    continue
+                opening_inventory = [
+                    {
+                        "date": pt["date"],
+                        "onhand": float(pt["onhand"])
+                        if pt["onhand"] is not None
+                        else 0,
+                    }
+                    for pt in grp["inventory"]
+                    if pt.get("date") and not pt.get("date", "").startswith("20")
+                ]
+                grp["opening_inventory"] = opening_inventory
+                filtered_groups[key] = grp
+
+            all_plan_details = {}
+            for p in (
+                OperationPlan.objects.using(request.database)
+                .filter(type__in=("MO", "WO", "PO", "DO", "DLVR"))
+                .exclude(status="closed")
+                .select_related("item", "location", "supplier", "operation")
+            ):
+                all_plan_details[p.reference] = {
+                    "reference": p.reference,
+                    "type": p.type,
+                    "status": p.status or "",
+                    "name": p.name or "",
+                    "item_name": p.item.name if p.item else "",
+                    "location_name": p.location.name if p.location else "",
+                    "quantity": (
+                        float(p.quantity) if p.quantity is not None else 0
+                    ),
+                    "startdate": isoformat(p.startdate),
+                    "enddate": isoformat(p.enddate),
+                    "pegging": p.plan.get("pegging", {})
+                    if p.plan
+                    else {},
+                    "demand_id": p.demand_id or "",
+                    "operation_name": p.operation_id or "",
+                    "operation_category": (
+                        p.operation.category if p.operation else ""
+                    ),
+                    "delay": p.delay.total_seconds() if p.delay else None,
+                    "criticality": (
+                        float(p.criticality)
+                        if p.criticality is not None
+                        else None
+                    ),
+                }
+
+            demand_to_plans = {}
+            for pref, pd in all_plan_details.items():
+                for dname in pd["pegging"]:
+                    demand_to_plans.setdefault(dname, set()).add(pref)
+                if pd["demand_id"]:
+                    demand_to_plans.setdefault(
+                        pd["demand_id"], set()
+                    ).add(pref)
+
+            def collect_supply_chain(demand_name):
+                return set(
+                    demand_to_plans.get(demand_name, set())
+                )
+
+            for key, grp in filtered_groups.items():
+                all_orders = []
+                seen_orders = set()
+                for dname in grp["demands"]:
+                    chain = collect_supply_chain(dname)
+                    for pref in chain:
+                        if pref in seen_orders:
+                            continue
+                        seen_orders.add(pref)
+                        pd = all_plan_details.get(pref)
+                        if pd:
+                            all_orders.append(
+                                {
+                                    "op_ref": pref,
+                                    "op_type": pd["type"],
+                                    "op_status": pd["status"],
+                                    "op_start": pd["startdate"],
+                                    "op_end": pd["enddate"],
+                                    "quantity": pd["quantity"],
+                                    "item_name": pd["item_name"],
+                                    "location_name": pd[
+                                        "location_name"
+                                    ],
+                                    "operation_category": pd.get(
+                                        "operation_category", ""
+                                    ),
+                                    "operation_name": pd.get(
+                                        "operation_name", ""
+                                    ),
+                                    "delay": pd.get("delay"),
+                                    "criticality": pd.get(
+                                        "criticality"
+                                    ),
+                                }
+                            )
+                grp["all_orders"] = all_orders
+
+            demand_groups = {}
+            for dname, d in demand_objs.items():
+                chain = collect_supply_chain(dname)
+                if not chain:
+                    continue
+                orders = []
+                seen = set()
+                for pref in chain:
+                    if pref in seen:
+                        continue
+                    seen.add(pref)
+                    pd = all_plan_details.get(pref)
+                    if pd:
+                        peg_qty = (
+                            pd["pegging"].get(dname, None)
+                            if pd["pegging"]
+                            else None
+                        )
+                        orders.append(
+                            {
+                                "op_ref": pref,
+                                "op_type": pd["type"],
+                                "op_status": pd["status"],
+                                "op_start": pd["startdate"],
+                                "op_end": pd["enddate"],
+                                "quantity": (
+                                    float(peg_qty)
+                                    if peg_qty is not None
+                                    else pd["quantity"]
+                                ),
+                                "item_name": pd["item_name"],
+                                "location_name": pd[
+                                    "location_name"
+                                ],
+                                "name": pd["name"],
+                                "operation_category": pd.get(
+                                    "operation_category", ""
+                                ),
+                                "operation_name": pd.get(
+                                    "operation_name", ""
+                                ),
+                                "delay": pd.get("delay"),
+                                "criticality": pd.get(
+                                    "criticality"
+                                ),
+                            }
+                        )
+                demand_groups[dname] = {
+                    "name": d.name,
+                    "due": isoformat(d.due) if d.due else None,
+                    "quantity": (
+                        float(d.quantity)
+                        if d.quantity
+                        else 0
+                    ),
+                    "customer": d.customer_id or "",
+                    "item": d.item_id or "",
+                    "status": d.status or "",
+                    "all_orders": orders,
+                }
+
+        else:
+            from ccAPPSdb.input.models.operationplan import (
+                OperationPlanResource,
+            )
+
+            opr_qs = (
+                OperationPlanResource.objects.using(request.database)
+                .filter(
+                    operationplan__startdate__isnull=False,
+                    operationplan__enddate__isnull=False,
+                    operationplan__startdate__year__gte=2000,
+                )
+                .select_related(
+                    "resource__owner",
+                    "operationplan__item",
+                    "operationplan__location",
+                    "operationplan__supplier",
+                    "operationplan__demand",
+                    "operationplan__operation",
+                )
+                .order_by(
+                    "resource__owner_id",
+                    "operationplan__startdate",
+                    "operationplan__reference",
+                )
+            )
+            all_oprs = list(opr_qs[:limit])
+
+            from ccAPPSdb.input.models.resource import Resource
+
+            res_ids = {
+                opr.resource_id for opr in all_oprs if opr.resource_id
+            }
+            all_resources = {
+                r["name"]: r
+                for r in Resource.objects.using(request.database)
+                .filter(lft__isnull=False)
+                .values("name", "lft", "rght", "owner_id")
+            }
+            resource_ancestors = {}
+            for rid in res_ids:
+                r = all_resources.get(rid)
+                if not r:
+                    resource_ancestors[rid] = [rid]
+                    continue
+                ancestors = sorted(
+                    [
+                        x["name"]
+                        for x in all_resources.values()
+                        if x["lft"] <= r["lft"]
+                        and x["rght"] >= r["rght"]
+                    ],
+                    key=lambda n: all_resources[n]["lft"],
+                )
+                resource_ancestors[rid] = ancestors
+
+            for opr in all_oprs:
+                opplan = opr.operationplan
+                rid = opr.resource_id or ""
+                records.append(
+                    {
+                        "operationplan__reference": opplan.reference,
+                        "resource": rid,
+                        "resource_parent": (
+                            opr.resource.owner_id
+                            if opr.resource
+                            else None
+                        ),
+                        "hierarchy": resource_ancestors.get(
+                            rid, [rid]
+                        ),
+                        "demand": opplan.demand_id,
+                        "type": opplan.type,
+                        "status": opplan.status or "",
+                        "name": opplan.name or "",
+                        "item": opplan.item_id,
+                        "item_name": (
+                            opplan.item.name
+                            if opplan.item
+                            else None
+                        ),
+                        "location": opplan.location_id or "",
+                        "location_name": (
+                            opplan.location.name
+                            if opplan.location
+                            else None
+                        ),
+                        "supplier_name": (
+                            opplan.supplier.name
+                            if opplan.supplier
+                            else None
+                        ),
+                        "operation_name": opplan.operation_id or "",
+                        "operation_category": (
+                            opplan.operation.category
+                            if opplan.operation
+                            else ""
+                        ),
+                        "delay": (
+                            opplan.delay.total_seconds()
+                            if opplan.delay
+                            else None
+                        ),
+                        "criticality": (
+                            float(opplan.criticality)
+                            if opplan.criticality is not None
+                            else None
+                        ),
+                        "quantity": (
+                            float(opplan.quantity)
+                            if opplan.quantity is not None
+                            else None
+                        ),
+                        "startdate": isoformat(opplan.startdate),
+                        "enddate": isoformat(opplan.enddate),
+                    }
+                )
+
+            records.sort(
+                key=lambda x: (
+                    x.get("hierarchy", [""])[0] or "",
+                    x["startdate"] or "",
+                    x["operationplan__reference"] or "",
+                )
+            )
+
+        payload = {
+            "total": 1,
+            "page": 1,
+            "records": len(records),
+            "board": board,
+            "rows": records,
+            "inventory": inventory,
+            "pegging": pegging_links,
+            "item_groups": filtered_groups,
+            "demand_groups": demand_groups,
+        }
+        yield json.dumps(payload)
+
+
+class GanttEmbed(PlanEdit):
+    """Combined Gantt chart without admin chrome — for embedding in iframes."""
+
+    template = "execute/gantt_embed.html"
+    editable = False
+    title = "Gantt Chart"
+
+
+@staff_member_required
+def data_management(request):
+    """Data import/export management page."""
+    from importlib import import_module
+
+    from django.core.management import get_commands
+
+    all_commands = []
+    for commandname, appname in get_commands().items():
+        try:
+            cmd = getattr(
+                import_module("%s.management.commands.%s" % (appname, commandname)),
+                "Command",
+            )
+            if getattr(cmd, "index", -1) >= 0 and getattr(cmd, "getHTML", None):
+                cmd.name = commandname
+                html = cmd.getHTML(request)
+                if html:
+                    all_commands.append(
+                        {
+                            "command": cmd,
+                            "options": {"collapsed": cmd.name != "runplan"},
+                            "html": html,
+                        }
+                    )
+        except Exception as e:
+            logger.warning(
+                "Couldn't import getHTML method from %s.management.commands.%s: %s"
+                % (appname, commandname, e)
+            )
+
+    # Exclude commands already shown on the main execute page
+    _exclude = {"runplan", "scheduletasks", "scenario_copy", "runproductionplan", "runworker"}
+    all_commands = [c for c in all_commands if c["command"].name not in _exclude]
+
+    all_commands.sort(key=lambda x: x["command"].index)
+    mid = (len(all_commands) + 1) // 2
+    commandlist1 = all_commands[:mid]
+    commandlist2 = all_commands[mid:]
+
+    return render(
+        request,
+        "execute/data_management.html",
+        {"commandlist1": commandlist1, "commandlist2": commandlist2},
+    )

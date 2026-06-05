@@ -1,7 +1,18 @@
-{% extends "admin/base_site_grid.html" %}
-{% load i18n %}
-
-{% block extrahead %}{{block.super}}
+{% load i18n %}<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% trans "supply path" %}</title>
+<link rel="stylesheet" href="{{STATIC_URL}}css/jquery-ui.min.css">
+<link rel="stylesheet" href="{{STATIC_URL}}css/ui.jqgrid.css">
+<link rel="stylesheet" href="{{STATIC_URL}}css/bootstrap.min.css">
+<link rel="stylesheet" href="{{STATIC_URL}}css/font-awesome.min.css">
+<script src="{{STATIC_URL}}js/jquery-3.6.0.min.js"></script>
+<script src="{{STATIC_URL}}js/jquery-ui.min.js"></script>
+<script src="{{STATIC_URL}}js/jquery.jqgrid.min.js"></script>
+<script src="{{STATIC_URL}}js/ccAPPS.js"></script>
+<script>var url_prefix = '{{request.prefix}}';</script>
 <style>
 #svggraph {
   background-color: #ffffff;
@@ -11,6 +22,7 @@
   -ms-user-select: none;
   -o-user-select: none;
   user-select: none;
+  max-width: 100%;
 }
 
 path.flow {
@@ -95,6 +107,7 @@ g.node-routing text, g.node-alternate text, g.node-split text {
   pointer-events: all;
   fill: #475569;
 }
+.ui-jqgrid, .ui-jqgrid-view, .ui-jqgrid-titlebar, .ui-jqgrid-hdiv, .ui-jqgrid-bdiv, #gridpager, #gview_grid, .ui-jqdialog {display:none !important;}
 </style>
 <script src="{{STATIC_URL}}js/d3.min.js"></script>
 <script>
@@ -128,8 +141,8 @@ var routing_label_overlay;
 var collapsed_upstream = {};
 var collapsed_downstream = {};
 var visible_nodes = {};
-var graph_zoom_behavior = null;
-var graph_autofit_done = false;
+var viewBoxY = 0;
+var viewBoxH = 400;
 
 function isOperationNode(d)
 {
@@ -169,76 +182,6 @@ function getLevelSeedIds(level)
     if (nodes[i].level == level)
         seeds[nodes[i].id] = true;
   return seeds;
-}
-
-function applyGraphZoomTransform(translate, scale)
-{
-  if (!translate || translate.length !== 2 || !isFinite(scale) || scale <= 0)
-    return;
-  if (graph_zoom_behavior)
-    graph_zoom_behavior.translate(translate).scale(scale);
-  d3.selectAll('#svggraph > g')
-    .attr('transform', 'translate(' + translate + ') scale(' + scale + ')');
-}
-
-function fitGraphToViewport(force)
-{
-  if (!nodes || !nodes.length)
-    return;
-  var viewportW = $("#graph").width();
-  var viewportH = $("#graph").height();
-  if (!viewportW || !viewportH)
-    return;
-
-  var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  var hasVisibleNodes = false;
-
-  function halfW(n) {
-    if (n.halfW) return n.halfW;
-    if (n.type === 'buffer') return 16;
-    if (n.type === 'resource') return n.halfH || 22;
-    return 52;
-  }
-  function halfH(n) {
-    if (n.halfH) return n.halfH;
-    if (n.type === 'buffer') return 14;
-    if (n.type === 'resource') return 14;
-    return 13;
-  }
-
-  for (var i = 0; i < nodes.length; i++) {
-    var n = nodes[i];
-    if (!force && visible_nodes && visible_nodes[n.id] === false)
-      continue;
-    if (!isFinite(n.x) || !isFinite(n.y))
-      continue;
-    hasVisibleNodes = true;
-    var hw = halfW(n);
-    var hh = halfH(n);
-    if (n.x - hw < minX) minX = n.x - hw;
-    if (n.x + hw > maxX) maxX = n.x + hw;
-    if (n.y - hh < minY) minY = n.y - hh;
-    if (n.y + hh > maxY) maxY = n.y + hh;
-  }
-  if (!hasVisibleNodes || !isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY))
-    return;
-
-  var pad = 24;
-  var boundsW = Math.max(1, maxX - minX);
-  var boundsH = Math.max(1, maxY - minY);
-  var scaleX = (viewportW - 2 * pad) / boundsW;
-  var scaleY = (viewportH - 2 * pad) / boundsH;
-  var scale = Math.min(scaleX, scaleY);
-  if (!isFinite(scale) || scale <= 0)
-    scale = 1;
-  scale = Math.max(0.08, Math.min(2.5, scale));
-
-  var cx = (minX + maxX) / 2;
-  var cy = (minY + maxY) / 2;
-  var tx = viewportW / 2 - cx * scale;
-  var ty = viewportH / 2 - cy * scale;
-
-  applyGraphZoomTransform([tx, ty], scale);
 }
 
 function expandHiddenWithRoutingFamilies(hidden_nodes, reverse)
@@ -583,15 +526,7 @@ function isNonClickableOperationType(type)
 
 function clickedShaped(d)
 {
-  if (
-  	d.hasOwnProperty('type')
-	  	&& isNonClickableOperationType(d.type)
-  	)
-    return; // Don't show links for non existing operations
-  window.open(
-  	url_prefix + '/detail/input/' + d.type.replace('_alternate', '') .replace('routing','operation')+ '/' + admin_escape(d.name) +'/',
-  	"_self"
-  	);
+  return;
 }
 
 
@@ -1102,18 +1037,17 @@ function drawGraph(jsondata)
     nodes[i].x = width_level * (0.5 + maxlevel - nodes[i].level);
 
   // Initialize D3 force layout
-  graph_zoom_behavior = d3.behavior.zoom().on("zoom", function() {
-      var ev = d3.event;
-      d3.selectAll('#svggraph > g')
-        .attr('transform', 'translate(' + ev.translate + ') scale(' + ev.scale + ')');
-    });
   var svg = d3.select('#svggraph')
     .attr('width', width)
     .attr('height', 2000)
     .attr('viewBox','0 0 ' + width + ' 400')
-    .call(graph_zoom_behavior)
+    .call(d3.behavior.zoom().on("zoom", function() {
+        var ev = d3.event;
+        $("#svggraph > g").attr("transform", "translate(" + ev.translate + ") scale(" + ev.scale + ")");
+      }))
     .on('dblclick.zoom', null);
 
+  $("#graph").scrollTop(0);
   force = d3.layout.force()
     .nodes(nodes)
     .links(links)
@@ -1197,7 +1131,7 @@ function drawGraph(jsondata)
    .attr('height', 26)
    .attr('width', 104)          // default; will be resized after text measurement
    .attr('x', -52).attr('y', -13)
-  .style('cursor', function(d) { return isNonClickableOperationType(d.type) ? 'default' : 'pointer'; })
+  .style('cursor', 'default')
    .style('fill', function(d) {
       if (d.type === 'operation') return '#2563eb';
       if (d.type === 'operation_alternate') return '#60a5fa';
@@ -1255,7 +1189,7 @@ function drawGraph(jsondata)
    .attr('cy', 0)
    .attr('rx', 22)
    .attr('ry', 14)
-   .style('cursor', 'pointer')
+   .style('cursor', 'default')
    .style('fill', '#f97316')
    .style('filter', 'url(#glowfilter)')
    .style('opacity', function(d) { return (d.suboperindex > 0) ? 0.75 : 1; });
@@ -2244,21 +2178,39 @@ function drawGraph(jsondata)
   updateGraphGeometry();
 
   applyVisibilityFilters();
-  fitGraphToViewport(false);
-  graph_autofit_done = true;
+
+  // Auto-center: adjust viewBox to show all content centered
+  var yiMin = Infinity, yiMax = -Infinity;
+  for (var ci = 0; ci < nodes.length; ci++) {
+    if (nodes[ci].y < yiMin) yiMin = nodes[ci].y;
+    if (nodes[ci].y > yiMax) yiMax = nodes[ci].y;
+  }
+  if (isFinite(yiMin)) {
+    yiMin -= 70;
+    yiMax += 40;
+    var contentH = yiMax - yiMin;
+    var winH = $(window).height();
+    var maxH = Math.max(400, Math.min(800, winH - 40));
+    viewBoxH = Math.max(contentH, maxH);
+    viewBoxY = yiMin - (viewBoxH - contentH) / 2;
+    d3.select('#svggraph')
+      .attr('viewBox', '0 ' + viewBoxY + ' ' + width + ' ' + viewBoxH)
+      .attr('height', viewBoxH);
+    $("#graph").height(Math.min(viewBoxH, maxH));
+    $("#graph").scrollTop(0);
+  }
 }
 
 $(window).bind('resize', function() {
   var width = $("#graph").width();
   d3.select('#svggraph')
   .attr('width', width)
-  .attr('viewBox','0 0 ' + width + ' 400');
-  if (graph_autofit_done)
-    fitGraphToViewport(false);
+  .attr('viewBox','0 ' + viewBoxY + ' ' + width + ' ' + viewBoxH);
 });
 
 $(function(){
-  if ($("#graph").height() > $(window).height() - 340) $("#graph").height($(window).height() - 340);
+  var winHeight = $(window).height();
+  $("#graph").height(Math.min(Math.max(400, winHeight - 60), 800));
 
   $("#graph").resizable({
     handleSelector: "#graph-resize-handle",
@@ -2268,55 +2220,56 @@ $(function(){
       var width = $("#graph").width();
       var height = $("#graph").height();
       d3.select('#svggraph').attr('width', width).attr('viewBox','0 0 ' + width +' '+ height );
-      if (graph_autofit_done)
-        fitGraphToViewport(false);
-
-      // Resize the bottom grid to fill the remaining space of the window
-      var gridheight = $(window).height() - $("#content-main").offset().top - 40;
-      if (gridheight < 200)
-      	gridheight = 200;
-      $("#grid").setGridHeight(gridheight);
     }
   });
-
 });
 
 $(window).resize(function() {
-  var parentheight = $("#content-main").height;
-  setTimeout(function(){$(".ui-jqgrid").setGridHeight(parentheight)},300);
-
-	if ($("#content-main").height() < 150) $(".ui-jqgrid").css({height:150});
-	if ($("#graph").height() > $(window).height() - 350) $("#graph").height($(window).height() - 350);
-	$(".ui-jqgrid").css({height: ($(".ui-jqgrid-view").height() + $(".ui-jqgrid-pager").height()) + "px"});
+  var winHeight = $(window).height();
+  if ($("#graph").height() > winHeight - 60) $("#graph").height(Math.min(winHeight - 60, 800));
 });
 
 </script>
-{% endblock %}
+</head>
+<body style="overflow:hidden;max-width:100vw;">
+<div style="display:none"><table id="grid"></table><div id="gridpager"></div></div>
+<script>
+var reportkey = '{{reportkey|safe}}';
+var admin_escape = window.admin_escape || function(n){return n.replace(/_/g,"_5F").replace(/:/g,"_3A").replace(/\//g,"_2F").replace(/#/g,"_23").replace(/\?/g,"_3F").replace(/;/g,"_3B").replace(/@/g,"_40").replace(/&/g,"_26").replace(/=/g,"_3D").replace(/\+/g,"_2B").replace(/\$/g,"_24").replace(/,/g,"_2C").replace(/"/g,"_22").replace(/</g,"_3C").replace(/>/g,"_3E").replace(/%/g,"_25").replace(/\\/g,"_5C").replace(/\t/g,"%09");};
+$(function(){
+  jQuery("#grid").jqGrid({
+    url: location.href + (location.search.length > 0 ? "&format=json" : "?format=json"),
+    datatype: "json",
+    jsonReader: {repeatitems: false},
+    colModel: [{{colmodel|safe}}],
+    rowNum: {{request.pagesize}},
+    iconSet: "fontAwesome",
+    guiStyle: "bootstrap5Primary",
+    loadError: function(xhr,st,err) {
+      if (xhr.status == 401) location.reload();
+      else console.error(xhr.statusText);
+    },
+    loadComplete: drawGraph,
+    treeGrid: true,
+    treeGridModel: 'adjacency',
+    ExpandColumn: 'depth',
+    treeIcons: {
+      plus:'fa-caret-right',
+      minus:'fa-caret-down',
+      leaf:'fa-genderless'
+    },
+    tree_root_level: 0,
+    treeReader: {
+      level_field: 'depth',
+      parent_id_field: 'parent',
+      leaf_field: 'leaf',
+      expanded_field: 'expanded'
+    },
+    ExpandColClick: true,
+  });
+});
+</script>
 
-{% block extra_grid %}loadComplete: drawGraph,
-treeGrid: true,
-treeGridModel: 'adjacency',
-ExpandColumn: 'depth',
-treeIcons: {
-  plus:'fa-caret-right',
-  minus:'fa-caret-down',
-  leaf:'fa-genderless'
-  },
-tree_root_level: 0,
-treeReader: {
-  level_field: 'depth',
-  parent_id_field: 'parent',
-  leaf_field: 'leaf',
-  expanded_field: 'expanded'
-  },
-ExpandColClick: true,
-{% endblock %}
-
-{% block tools %}{% include "common/snippet_follow.html" %}{% endblock %}
-
-{% block tabs %}{% tabs model %}{% endblock %}
-
-{% block before_table %}
 <div id="buffer-tooltip"></div>
 <div class="row" id="graphrow" style="min-height: 100px; text-align: center;">
 <div id="graph" class="col-md-12" style="min-height: 100px; clear: both; height: 345px; overflow: hidden;">
@@ -2502,4 +2455,5 @@ ExpandColClick: true,
 </svg>
 </div><span id="graph-resize-handle" class="fa fa-bars handle"></span>
 </div>
-{% endblock %}
+</body>
+</html>

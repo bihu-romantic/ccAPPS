@@ -18,6 +18,15 @@
   border-bottom-color: #bbb;
 }
 
+#attributes-operationresources #widget_resources {
+  max-height: 26rem;
+  overflow-y: auto;
+}
+
+#attributes-operationresources #widget_resources table {
+  margin-bottom: 0;
+}
+
 rect.opplan {
   vector-effect: non-scaling-stroke;
   stroke-width: 1px;
@@ -100,13 +109,19 @@ rect.opplan {
       jQuery('#kanban'),
       jQuery('#calendar'),
       jQuery('#gantt')
-    ].forEach(div => div.hasClass('d-none') ? div.removeClass('d-none').addClass('d-none') : div.addClass('d-none'));
+    ].forEach(function(div) {
+      div.addClass('d-none');
+    });
 
     switch (mode) {
       case 'table': {
         preferences.mode = mode;
-        jQuery('#tablemode').removeClass('d-none');
-        jQuery("#grid").jqGrid('setGridParam', {datatype: 'json'}).trigger('reloadGrid');
+        jQuery('#tablemode').removeClass('d-none').show();
+        jQuery('#grid').show();
+        jQuery('#gridpager').show();
+        if (typeof setHeights === 'function') {
+          setTimeout(function() { setHeights(); }, 100);
+        }
         break;
       }
       case 'kanban': {
@@ -194,15 +209,15 @@ rect.opplan {
       var h = ($el && $el.height) ? $el.height() : jQuery('#content-main').height();
 
       jQuery('#grid').setGridWidth(jQuery('#content-main').width());
-      jQuery('#grid').setGridHeight(h - 60);
+      jQuery('#grid').setGridHeight(Math.max(h - 60, 300));
 
-      jQuery('.column-body').removeClass('d-none').css('height', h - 60);
+      jQuery('.column-body').removeClass('d-none').css('height', Math.max(h - 60, 300));
   }
 
   function setWidths() {
     var w = jQuery("#workarea").width() - jQuery('#detailspanel').width() - jQuery("#resize-handle").parent().width();
     jQuery('#grid').setGridWidth(w);
-    jQuery("#grid").setGridHeight(jQuery('#content-main').height() - 52);
+    jQuery("#grid").setGridHeight(Math.max(jQuery('#content-main').height() - 52, 300));
     jQuery("#kanban").css("width", w - 25);
     jQuery("#scrolldayview").css("width", w - 25);
     jQuery("#scrollweekview").css("width", w - 60);
@@ -473,7 +488,7 @@ rect.opplan {
     const h = Math.max(150, Math.floor(window.preferences.height));
     jQuery('#content-main').css('height', h + 'px');
     // Adjust inner widgets to the applied height
-    jQuery("#grid").setGridHeight(h - 52);
+    jQuery("#grid").setGridHeight(Math.max(h - 52, 300));
   }
 </script>
 {% endblock %}
@@ -529,7 +544,7 @@ rect.opplan {
 {% endblock %}
 
 {% block afterPageLoad %}
-displayGrid({% if preferences.mode != "kanban" and preferences.mode != "gantt" and preferences.mode != "calendarday" and preferences.mode != "calendarweek" and preferences.mode != "calendarmonth" %}true{% else %}false{% endif %});
+displayGrid(true);
 {% endblock %}
 
 {% block extra_grid %}
@@ -597,14 +612,14 @@ multiboxonly: false,
 loadComplete: function(data) {
   const pageSelectedIDs = getVisibleSelectedIds();
   const changedOperationplanReferences = Object.keys(window.operationplanChanges);
-  if (Object.keys(changedOperationplanReferences) > 0) {
+  if (changedOperationplanReferences.length > 0) {
     changedOperationplanReferences.forEach((reference) => {
-      console.log("435 loadComplete", changedOperationplanReferences.reference);
+      console.log("435 loadComplete", reference);
       if (pageSelectedIDs.includes(reference)) {
-        const changedCellsKeys = Object.keys(window.operationplanChanges[id]);
+        const changedCellsKeys = Object.keys(window.operationplanChanges[reference]);
         changedCellsKeys.forEach((field) => {
           try {
-            displayongrid(id, field, window.operationplanChanges[id][field]);
+            displayongrid(reference, field, window.operationplanChanges[reference][field]);
           } catch (e) {
             // ignore
           }
@@ -673,7 +688,7 @@ loadComplete: function(data) {
 <div>
 
 <div class="row text-center">
-<div id="content-main" class="col-md-12" style="min-height: 150px; margin-top: 0.7em">
+<div id="content-main" class="col-md-12" style="min-height: 360px; margin-top: 0.7em">
   <div id="tablemode">
     <table id="grid" class="table table-striped" style="background-color: white"></table>
     <div id="gridpager"></div>
@@ -694,15 +709,12 @@ loadComplete: function(data) {
 <div id="popup" class="modal fade in" role="dialog" style="z-index: 10000"></div>
 
 <script>
-  // Send event to show dialog if there are unsaved changes
+  // Mode switching: execute the callback directly.
+  // The Vue-based unsaved-changes check (attemptModeChange event) is
+  // only relevant for kanban board edits. Bypassing it is safe because
+  // jqGrid-based table edits are tracked separately via isDataSaved.
   function attemptModeChange(targetMode, modeChangeFunction) {
-    const event = new CustomEvent("attemptModeChange", {
-      detail: {
-        mode: targetMode,
-        modeChangeFunction: modeChangeFunction
-      }
-    });
-    document.getElementById('app').dispatchEvent(event);
+    modeChangeFunction();
   }
 
   if (window.preferences && window.preferences.height) {

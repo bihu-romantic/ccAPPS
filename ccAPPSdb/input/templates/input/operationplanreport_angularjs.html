@@ -18,6 +18,15 @@
   border-bottom-color: #bbb;
 }
 
+#attributes-operationresources #widget_resources {
+  max-height: 26rem;
+  overflow-y: auto;
+}
+
+#attributes-operationresources #widget_resources table {
+  margin-bottom: 0;
+}
+
 rect.opplan {
   vector-effect: non-scaling-stroke;
   stroke-width: 1px;
@@ -337,7 +346,7 @@ rect.opplan {
 {% endblock %}
 
 {% block afterPageLoad %}
-displayGrid({% if preferences.mode != "kanban" and preferences.mode != "gantt" and preferences.mode != "calendarday" and preferences.mode != "calendarweek" and preferences.mode != "calendarmonth" %}true{% else %}false{% endif %});
+displayGrid(true);
 {% endblock %}
 
 {% block extra_grid %}

@@ -312,8 +312,8 @@ class Command(BaseCommand):
             os.environ["PGTZ"] = settings.TIME_ZONE
 
             # Prepare environment
+            os.environ["nowebservice"] = "1"
             if task.name == "odoo_import":
-                os.environ["nowebservice"] = "1"
                 os.environ["odoo_read_1"] = "1"
             os.environ["supply"] = "true"
             os.environ["CCAPPS_PLANTYPE"] = str(plantype)
@@ -402,7 +402,7 @@ class Command(BaseCommand):
             setattr(_thread_locals, "database", old_thread_locals)
 
     # accordion template
-    title = _("Create a plan")
+    title = _("创建计划")
     index = 0
 
     help_url = "command-reference.html#runplan"

@@ -561,7 +561,7 @@ class Command(BaseCommand):
         return True
 
     # accordion template
-    title = _("Group and schedule tasks")
+    title = _("安排任务")
     index = 500
 
     help_url = "command-reference.html#scheduletasks"

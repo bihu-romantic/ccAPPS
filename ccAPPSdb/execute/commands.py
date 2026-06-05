@@ -236,25 +236,48 @@ class SupplyPlanning(PlanTask):
             constraint = parseConstraints(os.environ["CCAPPS_CONSTRAINT"])
         except Exception:
             constraint = 4 + 16 + 32  # Default is with all constraints enabled
-        cls.solver = ccAPPS.solver_mrp(
-            constraints=constraint,
-            plantype=plantype,
-            loglevel=loglevel,
-            lazydelay=int(Parameter.getValue("lazydelay", database, "86400")),
-            minimumdelay=int(Parameter.getValue("plan.minimumdelay", database, "3600")),
-            rotateresources=(
-                Parameter.getValue("plan.rotateResources", database, "true").lower()
-                == "true"
-            ),
-            iterationmax=int(Parameter.getValue("plan.iterationmax", database, "0")),
-            resourceiterationmax=int(
-                Parameter.getValue("plan.resourceiterationmax", database, "500")
-            ),
-            administrativeleadtime=86400
-            * float(Parameter.getValue("plan.administrativeLeadtime", database, "0")),
-            autofence=86400
-            * float(Parameter.getValue("plan.autoFenceOperations", database, "0")),
-        )
+        # Choose solver: ACO (default) or MRP heuristic
+        use_aco = Parameter.getValue("plan.solver", database, "aco").lower() != "heuristic"
+        if use_aco:
+            cls.solver = ccAPPS.solverACO(
+                constraints=constraint,
+                plantype=plantype,
+                loglevel=loglevel,
+                lazydelay=int(Parameter.getValue("lazydelay", database, "86400")),
+                minimumdelay=int(Parameter.getValue("plan.minimumdelay", database, "3600")),
+                rotateresources=(
+                    Parameter.getValue("plan.rotateResources", database, "true").lower()
+                    == "true"
+                ),
+                iterationmax=int(Parameter.getValue("plan.iterationmax", database, "0")),
+                resourceiterationmax=int(
+                    Parameter.getValue("plan.resourceiterationmax", database, "500")
+                ),
+                administrativeleadtime=86400
+                * float(Parameter.getValue("plan.administrativeLeadtime", database, "0")),
+                autofence=86400
+                * float(Parameter.getValue("plan.autoFenceOperations", database, "0")),
+            )
+        else:
+            cls.solver = ccAPPS.solver_mrp(
+                constraints=constraint,
+                plantype=plantype,
+                loglevel=loglevel,
+                lazydelay=int(Parameter.getValue("lazydelay", database, "86400")),
+                minimumdelay=int(Parameter.getValue("plan.minimumdelay", database, "3600")),
+                rotateresources=(
+                    Parameter.getValue("plan.rotateResources", database, "true").lower()
+                    == "true"
+                ),
+                iterationmax=int(Parameter.getValue("plan.iterationmax", database, "0")),
+                resourceiterationmax=int(
+                    Parameter.getValue("plan.resourceiterationmax", database, "500")
+                ),
+                administrativeleadtime=86400
+                * float(Parameter.getValue("plan.administrativeLeadtime", database, "0")),
+                autofence=86400
+                * float(Parameter.getValue("plan.autoFenceOperations", database, "0")),
+            )
         if hasattr(cls, "debugResource"):
             cls.solver.userexit_resource = cls.debugResource
         if hasattr(cls, "debugDemand"):

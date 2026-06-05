@@ -76,13 +76,33 @@
 
 
 #nav-menu-header {
+    background: $primary;
     .navbar-brand img {
         height: $navbar-brand-height;
     }
 
     a.dropdown-item,
     a.nav-link {
-        /* text-transform removed to preserve ccAPPS brand casing */
+        color: var(--bs-white);
+    }
+
+    a.dropdown-item:hover,
+    a.nav-link:hover {
+        color: var(--bs-white);
+        opacity: 0.85;
+    }
+
+    .dropdown-menu {
+        background: var(--bs-white);
+    }
+
+    .dropdown-menu a.dropdown-item {
+        color: $body-color;
+    }
+
+    .dropdown-menu a.dropdown-item:hover {
+        background: rgba(255, 109, 0, 0.15);
+        color: $primary;
     }
 
     @include media-breakpoint-up(lg) {
@@ -173,7 +193,7 @@ form .module li:has(input[type=checkbox]) {
 .axis line,
 .miniaxis path {
     fill: none;
-    stroke: #000;
+    stroke: $body-color;
     shape-rendering: crispEdges;
 }
 
@@ -797,8 +817,13 @@ h1 small {
         background-color: transparent;
     }
 
-    .card table td.dirty {
+    .card table td.dirty,
+    .card p.dirty {
         background: $danger;
+    }
+
+    .card.dirty:not(.active) {
+        box-shadow: inset 0 0 0 2px $danger;
     }
 
     .card.active {

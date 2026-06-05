@@ -76,7 +76,7 @@ DATABASES = {
             # Database name used when running the test suite.
             "NAME": (f"{os.environ.get("POSTGRES_DBNAME","frepple")}_test{i}"),
             # Port for web service when running the test suite
-            "CCAPPS_PORT": f"127.0.0.1:{i+9002}",
+            "CCAPPS_PORT": f"0.0.0.0:{i+9002}",
         },
         # The FILEUPLOADFOLDER setting is used by the "import data files" task.
         # By default all scenario databases use the same data folder on the server.
@@ -94,12 +94,12 @@ DATABASES = {
         "SQL_ROLE": "report_role",
         "SECRET_WEBTOKEN_KEY": SECRET_KEY,
         # Port for the ccAPPS web service
-        "CCAPPS_PORT": f"127.0.0.1:{i+8002}",
+        "CCAPPS_PORT": "0.0.0.0:8000" if i == 5 else f"0.0.0.0:{i+8000}",
     }
     # Adjust the range to include extra scenarios in the list.
     # When changing this, your apache configuration file also needs a matching adjustment.
     # THE NEXT LINE IS AUTOMATICALLY UPDATED IN SCENARIO MANAGEMENT WIDGET!
-    for i in range(5)
+    for i in range(7)
 }
 
 # Google analytics code to report usage statistics to.

@@ -1358,3 +1358,80 @@ class APIKeyList(GridReport):
             editable=False,
         ),
     )
+
+
+def SupplyChainPathData(request):
+    """Return graph data for a product's supply chain path (BOM explosion)."""
+    from django.http import JsonResponse
+    from django.db import connections
+
+    item_name = request.GET.get("item", "")
+    if not item_name:
+        return JsonResponse({"nodes": [], "edges": []})
+
+    nodes = {}
+    edges_seen = set()
+    edges = []
+
+    def add_node(nid, label, ntype):
+        if nid not in nodes:
+            nodes[nid] = {"id": nid, "label": label, "type": ntype}
+
+    def add_edge(frm, to, label, color):
+        key = (frm, to)
+        if key not in edges_seen and frm in nodes and to in nodes:
+            edges_seen.add(key)
+            edges.append({
+                "id": len(edges), "from": frm, "to": to,
+                "label": label, "color": color,
+            })
+
+    with connections[request.database].cursor() as cursor:
+        add_node(f"item:{item_name}", item_name, "item")
+
+        # Collect all operationmaterial rows for operations that produce this item
+        cursor.execute("""
+            SELECT om.operation_id, om.item_id, om.quantity
+            FROM operationmaterial om
+            WHERE om.item_id = %s AND om.quantity > 0
+        """, [item_name])
+        for op_id, produced_item, _ in cursor.fetchall():
+            add_node(f"operation:{op_id}", op_id, "operation")
+            add_edge(f"operation:{op_id}", f"item:{produced_item}", "生产", "#27AE60")
+
+            # (Resources intentionally skipped: operation name implies the process)
+
+            # Raw materials consumed by this operation (BOM inputs)
+            cursor.execute("""
+                SELECT om2.item_id
+                FROM operationmaterial om2
+                WHERE om2.operation_id = %s AND om2.quantity < 0
+            """, [op_id])
+            for (raw_item,) in cursor.fetchall():
+                add_node(f"item:{raw_item}", raw_item, "item")
+                add_edge(f"item:{raw_item}", f"operation:{op_id}", "消耗", "#E67E22")
+
+                # Supplier
+                cursor.execute(
+                    "SELECT supplier_id FROM itemsupplier WHERE item_id = %s",
+                    [raw_item],
+                )
+                for (sup_id,) in cursor.fetchall():
+                    add_node(f"supplier:{sup_id}", sup_id, "supplier")
+                    add_edge(f"supplier:{sup_id}", f"item:{raw_item}", "供应", "#8E44AD")
+
+                # Level 3: Sub-operations producing this raw material
+                cursor.execute("""
+                    SELECT om3.operation_id FROM operationmaterial om3
+                    WHERE om3.item_id = %s AND om3.quantity > 0
+                """, [raw_item])
+                for (sub_op_id,) in cursor.fetchall():
+                    add_node(f"operation:{sub_op_id}", sub_op_id, "operation")
+                    add_edge(f"operation:{sub_op_id}", f"item:{raw_item}", "生产", "#27AE60")
+
+                    # (Resources skipped: operation name implies the process)
+
+    return JsonResponse({
+        "nodes": list(nodes.values()),
+        "edges": edges,
+    })

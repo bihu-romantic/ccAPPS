@@ -1456,6 +1456,7 @@ class ExportOperationPlanResources(PlanTask):
     def getData(timestamp, resources=None, cluster=-1, **kwargs):
         import ccAPPS
 
+        seen = set()
         for i in resources or ccAPPS.resources():
             if cluster not in (-1, -2) and i.cluster not in cluster:
                 continue
@@ -1473,6 +1474,10 @@ class ExportOperationPlanResources(PlanTask):
                         )
                     )
                 else:
+                    key = (j.operationplan.reference, j.resource.name)
+                    if key in seen:
+                        continue
+                    seen.add(key)
                     yield "%s\v%s\v%s\v%s\v%s\v%s\n" % (
                         clean_value(j.operationplan.reference),
                         clean_value(j.resource.name),

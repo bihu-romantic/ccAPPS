@@ -143,7 +143,7 @@ menu.addItem(
 )
 
 # ── Capacity ──
-menu.addItem("supply_chain", "capacity_section", section=True, label=_("capacity"), index=3000)
+menu.addItem("supply_chain", "capacity_section", section=True, label=_("资源"), index=3000)
 
 menu.addItem(
     "supply_chain",

@@ -296,6 +296,19 @@ class OperationPlanMixin(GridReport):
             if mode in ["gantt", "calendarday", "calendarweek", "calendarmonth"]
             else "input/operationplanreport.html"
         )
+        banned_widgets = {"networkstatus"}
+        if widgets:
+            changed = False
+            for col in widgets:
+                for grp in col.get("cols", []):
+                    old_widgets = grp.get("widgets", [])
+                    new_widgets = [w for w in old_widgets if w and w[0] not in banned_widgets]
+                    if len(new_widgets) != len(old_widgets):
+                        grp["widgets"] = new_widgets
+                        changed = True
+            if changed:
+                request.prefs["widgets"] = widgets
+                widgets = request.prefs["widgets"]
         if not widgets:
             # Inject the default layout of the widgets
             request.prefs["widgets"] = [
@@ -332,7 +345,6 @@ class OperationPlanMixin(GridReport):
                         {
                             "width": 12,
                             "widgets": [
-                                ["networkstatus", {"collapsed": False}],
                                 ["downstreamoperationplans", {"collapsed": False}],
                                 ["upstreamoperationplans", {"collapsed": False}],
                             ],
@@ -1889,6 +1901,11 @@ class UpstreamItemPath(PathReport):
     objecttype = Item
 
 
+class EmbedItemPath(UpstreamItemPath):
+    """Supply path graph only, without admin chrome — for embedding in iframes."""
+    template = "input/embed_path.html"
+
+
 class UpstreamBufferPath(PathReport):
     downstream = False
     objecttype = Buffer
@@ -2074,7 +2091,7 @@ class OperationPlanDetail(View):
                     "quantity": float(opplan.quantity),
                     "quantity_completed": float(opplan.quantity_completed or 0),
                     "criticality": (
-                        float(opplan.criticality) if opplan.criticality else ""
+                        float(opplan.criticality) if opplan.criticality is not None else ""
                     ),
                     "delay": opplan.delay.total_seconds() if opplan.delay else "",
                     "status": opplan.status,
@@ -2969,6 +2986,9 @@ class OperationPlanDetail(View):
                     # Status quantity
                     opplan.status = opplan_data["status"]
                     save = True
+                if "remark" in opplan_data:
+                    opplan.remark = opplan_data["remark"]
+                    save = True
                 if "reference" in opplan_data:
                     # Update reference
                     opplan.reference = opplan_data["reference"]
@@ -2976,16 +2996,21 @@ class OperationPlanDetail(View):
 
                 # Save if changed
                 if save:
+                    update_fields = [
+                        "startdate",
+                        "enddate",
+                        "quantity",
+                        "quantity_completed",
+                        "reference",
+                        "lastmodified",
+                    ]
+                    if "status" in opplan_data:
+                        update_fields.append("status")
+                    if "remark" in opplan_data:
+                        update_fields.append("remark")
                     opplan.save(
                         using=request.database,
-                        update_fields=[
-                            "startdate",
-                            "enddate",
-                            "quantity",
-                            "quantity_completed",
-                            "reference",
-                            "lastmodified",
-                        ],
+                        update_fields=update_fields,
                     )
             except OperationPlan.DoesNotExist:
                 # Silently ignore
@@ -2993,4 +3018,7 @@ class OperationPlanDetail(View):
             except Exception as e:
                 # Swallow the exception and move on
                 logger.error("Error updating operationplan: %s" % e)
-        return HttpResponse(content="OK")
+        return HttpResponse(
+            content='{"OK": 1}',
+            content_type="application/json; charset=%s" % settings.DEFAULT_CHARSET,
+        )

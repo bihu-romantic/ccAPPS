@@ -823,6 +823,14 @@
           "
       />
     </p>
+    <p v-if="opplan.delay != null && opplan.delay !== '' || opplan.operationplan__delay != null && opplan.operationplan__delay !== ''">
+      <span class="text-muted">{{ ttt('Delay') }}:</span>
+      {{ Math.round(parseInt(opplan.delay || opplan.operationplan__delay || '0') / 86400) }} days
+    </p>
+    <p v-if="opplan.criticality != null && opplan.criticality !== '' || opplan.operationplan__criticality != null && opplan.operationplan__criticality !== ''">
+      <span class="text-muted">{{ ttt('Criticality') }}:</span>
+      {{ opplan.criticality || opplan.operationplan__criticality }}
+    </p>
   </div>
   <div data-no-drag v-if="opplan.type === 'STCK'">
     <p>

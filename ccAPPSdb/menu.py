@@ -34,12 +34,14 @@ menu = Menu()
 
 # Add our default topics.
 # Supply chain combines sales, inventory, capacity, purchasing, and manufacturing.
-menu.addGroup("supply_chain", label=_("supply chain"), index=100)
+menu.addGroup("supply_chain", label=_("数据管理"), index=100)
 menu.addGroup("distribution", label=_("distribution"), index=200)
+menu.addGroup("execute", label=_("Execute"), index=250)
 menu.addGroup("admin", label=_("admin"), index=300)
 menu.addGroup("help", label=_("help"), index=800)
 menu.addItem("supply_chain", "data", separator=True, index=1000)
 menu.addItem("distribution", "data", separator=True, index=1000)
+menu.addItem("execute", "data", separator=True, index=1000)
 menu.addItem("admin", "data", separator=True, index=1000)
 
 # Adding the menu modules of each installed application.

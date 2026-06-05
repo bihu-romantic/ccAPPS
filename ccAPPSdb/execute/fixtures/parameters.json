@@ -1,3 +1,10 @@
 [
-    {"pk": "import_skips_audit_log", "model":"common.parameter", "fields": {"value":"true", "description":"When set to true, the import data files command doesn''t create any audit log message. Default:true"}}
+    {
+        "pk": "import_skips_audit_log",
+        "model": "common.parameter",
+        "fields": {
+            "value": "true",
+            "description": "设为 true 时，导入数据文件命令不创建任何审计日志。默认：true。"
+        }
+    }
 ]

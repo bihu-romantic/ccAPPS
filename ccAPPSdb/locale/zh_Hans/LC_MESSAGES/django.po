@@ -2181,13 +2181,13 @@ msgstr "导入Excel"
 msgid "Load a dataset"
 msgstr "载入数据集"
 
-#: execute/management/commands/runplan.py:353 execute/widget.py:39
-msgid "Create a plan"
+#: execute/management/commands/runplan.py:405 execute/widget.py:33
+msgid "Create a supply plan"
 msgstr "创建计划"
 
 #: execute/management/commands/scenario_copy.py:463
 msgid "scenario management"
-msgstr "场景管理：What-if 模拟分析"
+msgstr "What-if 模拟分析"
 
 #: execute/management/commands/scheduletasks.py:377
 msgid "Group and schedule tasks"
@@ -5354,7 +5354,7 @@ msgstr "销售"
 
 #: menu.py:25 output/views/constraint.py:30
 msgid "capacity"
-msgstr "产能"
+msgstr "资源"
 
 #: menu.py:26 settings.py:432
 msgid "purchasing"
@@ -6976,4 +6976,6 @@ msgstr "供应链网络"
 msgid "Interactive graph of supply chain buffers, operations, and flows"
 msgstr "供应链缓冲区、工序和流程的交互式可视化"
 
+msgid "Configure Resource Hierarchy"
+msgstr "配置资源层级"
 

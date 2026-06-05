@@ -142,15 +142,16 @@ function handleScenarioAction(action) {
     url: `/default/execute/scenario_${action}/`,
     type: "POST",
     success: function () {
-      $("#scenariotoast span").text(`Launched ${action} scenario task`);
+      const actionText = action === "add" ? "已启动添加场景任务" : "已启动删除场景任务";
+      $("#scenariotoast span").text(actionText);
       bootstrap.Toast.getOrCreateInstance($("#scenariotoast")[0], { delay: 5000 }).show();
       // Reload the page. This can take while since the web server needs reloading.
       setTimeout(function () {
-        location.reload(); 
-      }, 1000); 
+        location.reload();
+      }, 1000);
     },
     error: function (xhr) {
-      const errorMsg = xhr.responseText || `An error occurred while ${action}ing scenario`;
+      const errorMsg = xhr.responseText || (action === "add" ? "添加场景时发生错误" : "删除场景时发生错误");
       $("#scenariotoast span").text(errorMsg);
       bootstrap.Toast.getOrCreateInstance($("#scenariotoast")[0], { delay: 5000 }).show();
 
@@ -172,7 +173,7 @@ $(".scenariorelease").on("click", function(event) {
    type: 'POST',
    data: {release: 1, database:releasedScenario},
    success: function() {
-     $("#scenariotoast span").text("Launched releasing task");
+     $("#scenariotoast span").text("已启动释放任务");
      bootstrap.Toast.getOrCreateInstance($("#scenariotoast")[0]).show();
      if (target == url_prefix) window.location.href = "/"; 
    },
@@ -193,7 +194,7 @@ $(".scenariopromote").on("click", function(event) {
      destination: $(this).attr("data-bs-target")
      },
    success: function() {
-     $("#scenariotoast span").text("Launched promotion task");
+     $("#scenariotoast span").text("已启动升级任务");
      bootstrap.Toast.getOrCreateInstance($("#scenariotoast")[0]).show();
    },
    fail: function() {
@@ -215,7 +216,7 @@ $(".scenariocopy").on("click", function(event) {
      dumpfile: $(this).attr("dumpfile")
      },
    success: function() {
-     $("#scenariotoast span").text("Launched copy task");
+     $("#scenariotoast span").text("已启动复制任务");
      bootstrap.Toast.getOrCreateInstance($("#scenariotoast")[0]).show();
    }});
 });

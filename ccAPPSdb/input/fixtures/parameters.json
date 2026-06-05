@@ -4,15 +4,15 @@
         "model": "common.parameter",
         "fields": {
             "value": "now",
-            "description": "Current date of the plan, preferred format is YYYY-MM-DD HH:MM:SS but most known formats to represent a date and/or time are accepted."
+            "description": "计划的当前日期，推荐格式为 YYYY-MM-DD HH:MM:SS，也支持大多数常见日期/时间格式。"
         }
     },
     {
         "pk": "currency",
         "model": "common.parameter",
         "fields": {
-            "value": "$",
-            "description": "Set the currency symbol, defaults to suffix, add a comma after the symbol to make it a prefix"
+            "value": "￥",
+            "description": "设置货币符号，默认为后缀；在符号后加逗号可变为前缀（如 '$,' 表示 $100 在前）。"
         }
     },
     {
@@ -20,7 +20,7 @@
         "model": "common.parameter",
         "fields": {
             "value": "hours",
-            "description": "Time units to be used for the resource report: hours, days, weeks"
+            "description": "资源报告中使用的时间单位：hours（小时）、days（天）、weeks（周）。"
         }
     },
     {
@@ -28,7 +28,7 @@
         "model": "common.parameter",
         "fields": {
             "value": "0",
-            "description": "Specifies the number of days (value can be decimal) sales orders should be planned ahead of their due date to take into account for an administrative lead time. Default: 0"
+            "description": "销售订单应提前于到期日排产的天数（可为小数），用于预留行政前置时间。默认：0。"
         }
     },
     {
@@ -36,7 +36,7 @@
         "model": "common.parameter",
         "fields": {
             "value": "3600",
-            "description": "Specifies a minimum delivery date increment (in seconds) used by the planning algorithm in its search. Default: 3600"
+            "description": "计划算法搜索时使用的最小交付日期增量（秒）。默认：3600。"
         }
     },
     {
@@ -44,7 +44,7 @@
         "model": "common.parameter",
         "fields": {
             "value": "0",
-            "description": "Controls the verbosity of the planning log file. Accepted values are 0 (silent - default), 1 and 2 (verbose)"
+            "description": "控制计划日志的详细程度。0=静默（默认），1和2=详细。"
         }
     },
     {
@@ -52,7 +52,7 @@
         "model": "common.parameter",
         "fields": {
             "value": "true",
-            "description": "When set to true, the algorithm will better distribute the demand across alternate suboperations instead of using the preferred operation"
+            "description": "设为 true 时，算法会在替代子工序之间更均匀地分配需求，而不仅使用首选工序。"
         }
     },
     {
@@ -60,7 +60,7 @@
         "fields": {
             "name": "plan.individualPoolResources",
             "value": "false",
-            "description": "When set to true, an operation-resource record with quantity N is interpreted as 'find N member resources of size 1' instead of 'find a member resource with size N'"
+            "description": "设为 true 时，数量为 N 的工序-资源记录被解读为'找 N 个大小为 1 的资源'，而非'找一个大小为 N 的资源'。"
         }
     },
     {
@@ -68,7 +68,7 @@
         "model": "common.parameter",
         "fields": {
             "value": "0",
-            "description": "Controls rescheduling approved orders early. Values: 0 (inactive, default), 1 (active preserving existing resource assignments, 2 (active replanning resource assignments)"
+            "description": "控制是否将已批准订单提前重排。0=不启用（默认），1=启用（保留已有资源分配），2=启用（重新规划资源分配）。"
         }
     },
     {
@@ -76,7 +76,7 @@
         "model": "common.parameter",
         "fields": {
             "value": "true",
-            "description": "When set to true, the algorithm will better distribute the demand across alternate suboperations instead of using the preferred operation"
+            "description": "设为 true 时，算法会在替代子工序之间更均匀地分配需求，而不仅使用首选工序。"
         }
     },
     {
@@ -84,7 +84,7 @@
         "model": "common.parameter",
         "fields": {
             "value": "999",
-            "description": "The number of days the solver should wait for a confirmed replenishment before generating a proposed order. Default:999 (wait indefinitely)"
+            "description": "求解器在生成建议订单前，等待已确认补货的天数。默认：999（无限等待）。"
         }
     },
     {
@@ -92,15 +92,15 @@
         "fields": {
             "name": "plan.deliveryDuration",
             "value": "0",
-            "description": "The duration (in working hours) for the final shipment of a sales order to the customer. Default: 0"
+            "description": "销售订单最终发货给客户的持续时间（工作小时）。默认：0。"
         }
     },
     {
         "pk": "currency",
         "model": "common.parameter",
         "fields": {
-            "value": "$",
-            "description": "Set the currency symbol, defaults to suffix, add a comma after the symbol to make it a prefix"
+            "value": "￥",
+            "description": "设置货币符号，默认为后缀；在符号后加逗号可变为前缀（如 '$,' 表示 $100 在前）。"
         }
     },
     {
@@ -108,7 +108,7 @@
         "fields": {
             "name": "plan.fixBrokenSupplyPath",
             "value": "true",
-            "description": "Creates item supplier records with Unknown supplier to fix broken supply path. Default is true."
+            "description": "用'未知供应商'创建物料供应关系以修复断裂的供应路径。默认：true。"
         }
     },
     {
@@ -116,7 +116,7 @@
         "model": "common.parameter",
         "fields": {
             "value": "true",
-            "description": "Determines whether confirmed manufacturing orders consume material or not. Default is true."
+            "description": "确定已确认的制造订单是否消耗物料。默认：true。"
         }
     },
     {
@@ -124,7 +124,7 @@
         "model": "common.parameter",
         "fields": {
             "value": "true",
-            "description": "Determines whether confirmed manufacturing orders, purchase orders and distribution orders consume capacity or not. Default is true."
+            "description": "确定已确认的制造订单、采购订单和配送订单是否消耗产能。默认：true。"
         }
     },
     {
@@ -132,7 +132,7 @@
         "model": "common.parameter",
         "fields": {
             "value": "true",
-            "description": "Determines whether completed manufacturing orders and distribution orders consume material or not. Default is true."
+            "description": "确定已完成的制造订单和配送订单是否消耗物料。默认：true。"
         }
     },
     {
@@ -140,7 +140,7 @@
         "model": "common.parameter",
         "fields": {
             "value": "true",
-            "description": "Determines whether numbers in duration fields in spreadsheets are considered as days or seconds. Default is true (for days)."
+            "description": "确定电子表格中持续时间字段的数字是按天还是按秒计算。默认：true（按天）。"
         }
     },
     {
@@ -148,7 +148,7 @@
         "fields": {
             "name": "display_time",
             "value": "default",
-            "description": "This parameter applies to ALL scenarios and controls if date time fields should display the time. Accepted values: true or false."
+            "description": "适用于所有场景，控制日期时间字段是否显示时间。可选值：true 或 false。"
         }
     },
     {
@@ -156,7 +156,7 @@
         "fields": {
             "name": "date_format",
             "value": "default",
-            "description": "This parameter applies to ALL scenarios. Accepted values: month-day-year, day-month-year, year-month-day."
+            "description": "适用于所有场景，日期格式。可选值：month-day-year、day-month-year、year-month-day。"
         }
     }
 ]

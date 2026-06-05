@@ -141,7 +141,7 @@ menu.addItem(
 
 # Admin problem report
 menu.addItem(
-    "admin",
+    "execute",
     "problem report",
     url="/problem/?name=invalid%20data",
     report=ccAPPSdb.output.views.problem.Report,

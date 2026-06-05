@@ -731,7 +731,7 @@ class Command(BaseCommand):
             settings.DEBUG = tmp_debug
 
     # accordion template
-    title = _("scenario management")
+    title = _("What-if 模拟分析")
     index = 1300
     help_url = "command-reference.html#scenario-copy"
 

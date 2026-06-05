@@ -53,7 +53,7 @@ class ManufacturingOrderWidget(Widget):
     asynchronous = True
     size = "lg"
     url = "/data/input/manufacturingorder/?noautofilter&sord=asc&sidx=startdate&status__in=proposed,confirmed,approved"
-    exporturl = True
+    exporturl = False
     fence1 = 7
     fence2 = 30
 
@@ -1499,7 +1499,7 @@ class ResourceLoadWidget(Widget):
     asynchronous = True
     url = "/resource/"
     size = "md"
-    limit = 5
+    limit = 10
     high = 90
     medium = 80
 
@@ -1561,6 +1561,10 @@ class ResourceLoadWidget(Widget):
       .text(function(d,i) { return d[2] + "%"; })
       .attr("class","bold");
     """
+
+    @classmethod
+    def has_permission(cls, user, database):
+        return super().has_permission(user, database)
 
     @classmethod
     def render(cls, request):

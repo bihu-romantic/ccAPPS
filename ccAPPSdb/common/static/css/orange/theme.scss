@@ -1,12 +1,23 @@
-$light: #ffbc7c;
-$dark: $light;
+// ============================================================
+// Orange-Black Theme — 橙黑主题
+// ============================================================
 
-$primary: #d70000;
-$secondary: lighten($light, 5%);
-$success: #508513;
-$info: #03a9f4;
-$warning: #ffeb3b;
-$danger: #ff5252;
+// Core palette
+$orange-dark: #e65100;
+$orange-mid: #ff6d00;
+$orange-light: #ff9100;
+$orange-pale: #fff3e0;
+
+// Bootstrap variable overrides
+$light: #fff3e0;
+$dark: #212121;
+
+$primary: #ff6d00;
+$secondary: #fff3e0;
+$success: #4caf50;
+$info: #29b6f6;
+$warning: #ffa726;
+$danger: #ef5350;
 
 $white: #fff !default;
 $gray-100: #f8f9fa !default;
@@ -20,19 +31,63 @@ $gray-800: #343a40 !default;
 $gray-900: #212529 !default;
 $black: #000 !default;
 
-// Body background
-$body-bg: #ececec;
+// Body — keep white background
+$body-bg: #f5f5f5;
+$body-color: #333333;
 
-// Table color
+// Table
 $table-color: #333;
 $table-color-state: #333;
-
-// Override background colors
 $table-bg: inherit;
+$table-striped-bg: rgba(255, 109, 0, 0.04);
+$table-hover-bg: rgba(255, 109, 0, 0.1);
+
+// Card
 $card-bg: #fff;
+
+// Dropdown
 $dropdown-bg: #fff;
+$dropdown-link-color: #333;
+$dropdown-link-hover-bg: rgba(255, 109, 0, 0.1);
+$dropdown-link-hover-color: $orange-dark;
+$dropdown-link-active-bg: rgba(255, 109, 0, 0.15);
+$dropdown-link-active-color: $orange-dark;
+
+// Modal
 $modal-content-bg: #fff;
+
+// List group
 $list-group-bg: #fff;
+
+// Input
+$input-bg: #fff;
+$input-color: #333;
+$input-focus-border-color: $orange-mid;
+$input-placeholder-color: #999;
+
+// Nav
+$nav-tabs-link-active-bg: #fff;
+$nav-tabs-link-active-color: $orange-mid;
+
+// Navbar
+$navbar-light-color: #333;
+$nav-link-color: #333;
+
+// Links
+$link-color: $orange-dark;
+$link-hover-color: $orange-mid;
+
+// Breadcrumb
+$breadcrumb-bg: transparent;
+$breadcrumb-divider-color: #999;
+
+// Accordion
+$accordion-bg: #fff;
+$accordion-button-bg: $secondary;
+$accordion-button-color: #333;
+$accordion-button-active-bg: rgba(255, 109, 0, 0.12);
+$accordion-button-active-color: $orange-dark;
+$accordion-btn-focus-border-color: $orange-mid;
 
 // Logo height
 $navbar-brand-height: 3rem;
@@ -43,7 +98,6 @@ $font-family-sans-serif:
   "FontAwesome", "Open sans", Helvetica, Verdana, Arial, sans-serif;
 $font-family-monospace:
   "FontAwesome", Menlo, Monaco, Consolas, "Courier New", monospace;
-$body-color: #333333;
 
 // Grid breakpoints
 $grid-breakpoints: (
@@ -51,7 +105,6 @@ $grid-breakpoints: (
   sm: 576px,
   md: 768px,
   lg: 1050px,
-  // Increased from the default 992px to account for the wide navbar
   xl: 1200px,
   xxl: 1400px,
 );
@@ -68,38 +121,18 @@ $theme-colors: (
   "gray": $gray-600,
 );
 
-// You probably don't need to update the variables below this line.
-// These updates are normally generic for all ccAPPS themes.
-$accordion-bg: white;
-$accordion-btn-focus-border-color: $secondary;
-$accordion-button-active-bg: $secondary;
-$accordion-button-active-color: $body-color;
-$accordion-button-bg: $secondary;
-$accordion-button-color: $body-color;
+// Generic theme overrides
 $accordion-button-padding-y: 0.5rem;
-$breadcrumb-divider-color: $body-color;
-$breadcrumb-divider: "\00a0\00a0\F0DA\00a0\00a0";
-$breadcrumb-item-padding-x: 0.2rem;
 $btn-active-bg-shade-amount: 70%;
 $card-title-spacer-y: 0;
-$dropdown-color: $body-color;
-$dropdown-link-active-bg: $gray-200;
-$dropdown-link-active-color: $body-color;
-$dropdown-link-hover-bg: $gray-200;
-$dropdown-link-hover-color: $body-color;
 $h1-font-size: $font-size-base * 1.5;
 $h2-font-size: $font-size-base * 1.25;
 $h3-font-size: $font-size-base * 1.25;
 $h4-font-size: $font-size-base * 1.25;
 $h5-font-size: $font-size-base * 1.25;
-$input-bg: white;
 $input-btn-focus-width: 2px;
-$link-color: $body-color;
 $link-decoration: none;
-$link-hover-color: $body-color;
 $link-hover-decoration: none;
-$navbar-light-color: $body-color;
-$nav-link-color: $body-color;
-$nav-tabs-border-color: $light;
-$nav-tabs-border-radius: 0;
+$breadcrumb-item-padding-x: 0.2rem;
+$breadcrumb-divider: "\00a0\00a0\F0DA\00a0\00a0";
 $spacer: 1rem;

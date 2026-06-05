@@ -82,6 +82,13 @@ function selectAlternateResource(loadplan, newResource) {
     });
   }
 
+  // Track the change in the store
+  var reference = store.operationplan?.reference || store.operationplan?.operationplan__reference;
+  if (reference) {
+    store.trackOperationplanChanges(reference, 'loadplans', JSON.parse(JSON.stringify(loadplans.value)));
+  }
+  markDirty();
+
   // Handle different modes
   if (props.mode && (props.mode.startsWith('calendar') || props.mode === 'kanban')) {
     // Update calendar or kanban card

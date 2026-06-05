@@ -379,7 +379,7 @@ DEFAULT_DASHBOARD = [
                 "width": 4,
                 "widgets": [
                     # ("capacity_alerts", {}),
-                    ("resource_utilization", {"limit": 5, "medium": 80, "high": 90}),
+                    ("resource_utilization", {"limit": 10, "medium": 80, "high": 90}),
                 ],
             },
         ],

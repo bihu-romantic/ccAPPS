@@ -1,37 +1,15 @@
-[![Continous integration](https://github.com/ccAPPS/ccAPPS/actions/workflows/ubuntu24.yml/badge.svg)](https://github.com/ccAPPS/ccAPPS/actions/workflows/ubuntu24.yml)
+codex打不开：
+第一次打不开 — dev server 进程挂掉了（ps aux 查不到 runserver 进程），重启 bash scripts/devserver_8000.sh restart 就好了。
 
-# ccAPPS
+重启后页面 302 — Django 的 session 是内存级别的，重启 server 后旧 session 失效。浏览器拿着旧 cookie 访问，Django 不认识，就 302 跳转登录页。重新登录即可恢复。
 
-## Open source supply chain planning
 
-ccAPPS is an easy-to-use and easy-to-implement open source **demand forecasting** and
-**advanced planning and scheduling** tool for manufacturing companies.
 
-When spreadsheets doesn't suffice any longer to adequately plan and schedule your production, ccAPPS allows an easy and cost-efficient way to generate a more optimized plan.
+# 重启服务器
+bash /home/c/ccAPPS/scripts/devserver_8000.sh restart
 
-ccAPPS implements time series forecasting algorithms to analyze the sales history and compute the forecasted sales for the future.
+# 查看服务器状态
+bash /home/c/ccAPPS/scripts/devserver_8000.sh status
 
-ccAPPS implements production planning and scheduling algorithms based on best practices such as **theory of constraints** (ie *plan around the bottleneck*), **pull-based planning** (ie *start production as late as possible and directly triggered by demand*) and **lean manufacturing** (ie *avoid intermediate delays and inventory*).
-
-## Download
-
-The software can be downloaded in the following formats:
-
-* Ubuntu 24 .deb package on https://github.com/ccAPPS/ccAPPS/releases/
-* Docker container on https://github.com/orgs/ccAPPS/packages/container/package/ccAPPS-community
-* Source tarball or zip file from https://github.com/ccAPPS/ccAPPS/releases/
-* Documentation zip file from https://github.com/ccAPPS/ccAPPS/releases/
-
-## Documentation
-
-Visit [https://ccAPPS.com](https://ccAPPS.com) for documentation, screencasts and build instructions.
-
-## License
-
-The *Community Edition* is released under the [MIT licence](https://opensource.org/license/mit/).
-
-The *Enterprise Edition* can be purchased from ccAPPS bv. It provides additional functionality
-and professional support.
-
-The *Cloud Edition* provides provides the same capabilities as the Enterprise Edition, but is
-hosted as a service in the cloud: fully supported and maintained by ccAPPS bv.
+# 只看服务器还活着没
+curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/data/login/

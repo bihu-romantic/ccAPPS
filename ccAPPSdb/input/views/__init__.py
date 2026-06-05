@@ -32,6 +32,7 @@ from .utils import (
     UpstreamDemandPath,
     UpstreamBufferPath,
     UpstreamItemPath,
+    EmbedItemPath,
     UpstreamOperationPath,
     UpstreamResourcePath,
     OperationPlanDetail,

@@ -76,13 +76,13 @@ class SetupMatrixList(GridReport):
     help_url = "model-reference/setup-matrices.html"
     message_when_empty = Template(
         """
-        <h3>Define setup matrices</h3>
+        <h3>定义换线矩阵</h3>
         <br>
-        A setup matrix defines the time and cost of setup conversions on a resource.<br><br>
-        A setup matrix contains a list of rules that define the changeover cost and duration.<br>
+        换线矩阵定义了资源上换线转换所需的时间和成本。<br><br>
+        换线矩阵包含一组规则，用于定义换线成本和时长。<br>
         <br><br>
         <div role="group" class="btn-group.btn-group-justified">
-        <a href="{{request.prefix}}/data/input/setupmatrix/add/" class="btn btn-primary">Add a setup matrix</a>
+        <a href="{{request.prefix}}/data/input/setupmatrix/add/" class="btn btn-primary">添加换线矩阵</a>
         </div>
         <br>
         """
@@ -500,7 +500,6 @@ class ResourceDetail(OperationPlanMixin):
     frozenColumns = 3
     editable = True
     multiselect = True
-    height = 250
     help_url = "user-interface/plan-analysis/resource-detail-report.html"
     message_when_empty = Template(
         """

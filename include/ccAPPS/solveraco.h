@@ -38,88 +38,55 @@ namespace ccAPPS {
 
 /* Configuration parameters for the Ant Colony Optimization solver. */
 struct ACOConfig {
-  // Number of ants per iteration
   int ants = 20;
-
-  // Maximum number of iterations
   int iterations = 100;
-
-  // Pheromone weight (alpha)
   double alpha = 1.0;
-
-  // Heuristic weight (beta)
   double beta = 2.0;
-
-  // Evaporation rate [0, 1]
   double evaporation = 0.1;
-
-  // Pheromone deposit factor
   double Q = 100.0;
-
-  // Initial pheromone value
   double tau0 = 1.0;
-
-  // Stagnation threshold: stop if no improvement for N iterations
   int stagnation_limit = 30;
-
-  // Weight for tardiness in the evaluation function
   double weight_tardiness = 1.0;
-
-  // Weight for cost in the evaluation function
   double weight_cost = 0.5;
-
-  // Weight for setup time in the evaluation function
   double weight_setup = 0.3;
-
-  // Number of elite ants whose solutions get extra pheromone
   int elite_ants = 3;
+  bool runMRP = true;
+  bool joint_optimization = true;
 };
 
-/* A single ant's solution for resource scheduling.
- *
- * Each ant builds a sequence of operationplans on a specific resource.
- * The sequence determines the order in which operationplans are executed.
- */
+/* A candidate operation plan that an ant can select.
+ * When an operation has multiple resource options, each combination
+ * becomes a separate candidate. */
+struct CandidateOp {
+  OperationPlan* op;
+  const Resource* res;
+  Date earliestStart;  // constrained by material availability + upstream deps
+};
+
+/* A single ant's solution for resource scheduling. */
 struct AntSolution {
-  // Ordered sequence of operationplans on the resource
-  vector<OperationPlan*> sequence;
-
-  // Start dates for each operationplan in the sequence
-  vector<Date> startDates;
-
-  // End dates for each operationplan in the sequence
-  vector<Date> endDates;
-
+  // Per-resource ordered sequences
+  unordered_map<const Resource*, vector<OperationPlan*>> sequences;
+  // Per-resource start/end dates
+  unordered_map<const Resource*, vector<Date>> startDates;
+  unordered_map<const Resource*, vector<Date>> endDates;
+  // Per-resource selected resource (may differ from original assignment)
+  unordered_map<const Resource*, vector<const Resource*>> assignedResources;
   // Fitness value (higher is better)
   double fitness = -numeric_limits<double>::max();
 };
 
-/* Pheromone matrix for transitions between operationplans on a resource.
- *
- * The key is a pair (from_op, to_op), where from_op can be nullptr
- * (meaning "start of sequence"). The value is the pheromone level.
- */
+/* Pheromone matrix for transitions between operationplans on a resource. */
 class PheromoneMatrix {
  public:
   PheromoneMatrix() = default;
-
-  /* Get pheromone level for a transition. */
   double get(const OperationPlan* from, const OperationPlan* to) const;
-
-  /* Set pheromone level for a transition. */
   void set(const OperationPlan* from, const OperationPlan* to, double value);
-
-  /* Evaporate all pheromones by factor (1 - rho). */
   void evaporate(double rho);
-
-  /* Deposit pheromone on a path (sequence of operationplans). */
-  void deposit(const AntSolution& ant, double amount);
-
-  /* Reset all pheromones to tau0. */
+  void deposit(const vector<OperationPlan*>& sequence, double amount);
   void reset(double tau0);
 
  private:
-  // Hash for unordered_map with pair key
   struct PairHash {
     size_t operator()(
         const pair<const OperationPlan*, const OperationPlan*>& p) const {
@@ -127,57 +94,41 @@ class PheromoneMatrix {
              (hash<const void*>()(p.second) << 1);
     }
   };
-
   unordered_map<pair<const OperationPlan*, const OperationPlan*>, double,
-                PairHash>
-      matrix_;
+                PairHash> matrix_;
 };
 
 /* Ant Colony Optimization solver for resource scheduling.
  *
- * This solver augments the existing SolverCreate with ACO-based resource
- * scheduling. When enabled on a resource (via SearchMode::ACO on its Load),
- * the solver uses ACO to find an optimal sequence of operationplans on
- * that resource, minimizing a weighted combination of tardiness, cost,
- * and setup time.
- *
- * Usage:
- *   SolverACO solver;
- *   solver.setConfig(ACOConfig());
- *   solver.initPheromone(resource);
- *   solver.solve();  // runs ACO iterations
+ * Takes manufacturing orders from MRP and produces an optimized schedule
+ * per resource, considering:
+ *   1. Resource selection (multi-resource operations)
+ *   2. Setup times (SetupMatrix)
+ *   3. Due dates (demand due)
+ *   4. Upstream dependencies (cross-resource blocking)
+ *   5. Material availability (purchase order arrival dates)
  */
 class SolverACO : public SolverCreate {
  public:
   using SolverCreate::solve;
 
   SolverACO() : rng_(random_device{}()) { initType(metadata); }
-
   ~SolverACO() override {}
 
-  /* Initialize the Python type and metadata. */
   static int initialize();
-
-  /* Python factory method. */
   static PyObject* create(PyTypeObject*, PyObject*, PyObject*);
-
   const MetaClass& getType() const override { return *metadata; }
   static const MetaClass* metadata;
 
-  /* Set ACO configuration. */
   void setConfig(const ACOConfig& cfg) { config_ = cfg; }
   const ACOConfig& getConfig() const { return config_; }
+  void setRunMRP(bool b) { config_.runMRP = b; }
+  bool getRunMRP() const { return config_.runMRP; }
 
-  /* Run the ACO solver for all ACO-enabled resources. */
   void solve(void* v = nullptr) override;
-
-  /* Resource-level ACO scheduling.
-   * Collects all operationplans on the given resource and finds the
-   * optimal sequence using ant colony optimization.
-   */
   void solve(const Resource* res, void* v = nullptr) override;
+  void solveJoint(const vector<const Resource*>& resources);
 
-  /* Fall through: non-ACO resources use the standard SolverCreate logic. */
   void solve(const ResourceInfinite* r, void* v = nullptr) override {
     SolverCreate::solve(r, v);
   }
@@ -185,51 +136,45 @@ class SolverACO : public SolverCreate {
     SolverCreate::solve(r, v);
   }
 
-  /* Initialize pheromone matrix for a specific resource. */
   void initPheromone(const Resource* res);
-
-  /* Get the pheromone matrix for a resource (const). */
   const PheromoneMatrix* getPheromone(const Resource* res) const;
 
  private:
-  /* Construct a single ant's solution for the given resource. */
+  /* ---- Candidate building ---- */
+  vector<CandidateOp> buildCandidates(
+      const vector<const Resource*>& resources) const;
+
+  Date earliestStart(const OperationPlan* op, const Resource* res) const;
+
+  /* ---- Single-resource (legacy) ---- */
   AntSolution constructSolution(
       const Resource* res, const vector<OperationPlan*>& plans);
-
-  /* Evaluate the quality of an ant's solution.
-   * Returns a fitness value (higher is better).
-   */
-  double evaluate(const Resource* res, const AntSolution& solution);
-
-  /* Compute the heuristic value for transitioning from op1 to op2. */
-  double heuristic(const OperationPlan* from, const OperationPlan* to) const;
-
-  /* Run local search (2-opt) to improve a solution. */
   void localSearch(const Resource* res, AntSolution& solution);
+  double evaluate(const AntSolution& solution);
 
-  /* Roll back all commands created during an ant's solution evaluation. */
-  void rollbackSolution(const AntSolution& solution);
+  /* ---- Multi-resource joint ---- */
+  AntSolution constructJointSolution(
+      const vector<const Resource*>& resources,
+      const vector<CandidateOp>& allCandidates,
+      const unordered_map<const Resource*, Date>& resourceTimes);
+  void localSearchJoint(AntSolution& solution);
+  double evaluateJoint(
+      const AntSolution& solution,
+      const unordered_map<const Resource*, Date>& resourceTimes);
 
-  /* Apply the best solution found so far to the actual plan. */
-  void applyBestSolution(const Resource* res, const AntSolution& best);
-
-  /* Compute setup time between two operationplans on the same resource. */
+  /* ---- Shared helpers ---- */
+  double heuristic(const OperationPlan* from, const OperationPlan* to) const;
+  void applyBestSolution(const AntSolution& best);
+  bool isUpstreamBlocked(
+      const OperationPlan* op,
+      const unordered_map<const Resource*, Date>& resourceTimes) const;
   Duration computeSetupTime(const OperationPlan* from,
                             const OperationPlan* to) const;
 
- private:
   ACOConfig config_;
-
-  // One pheromone matrix per resource (keyed by resource pointer)
   unordered_map<const Resource*, PheromoneMatrix> pheromones_;
-
-  // Random number generator
   mt19937 rng_;
-
-  // Best solution found per resource during the current solve
-  unordered_map<const Resource*, AntSolution> bestSolutions_;
 };
 
 }  // namespace ccAPPS
-
 #endif  // SOLVERACO_H

@@ -50,9 +50,7 @@ function PreferenceSvc($http) {
       data[key] = value;
 
     // Post to the server
-    var urlprefix = '/' + angular.element(document).find('#database').attr('name');
-    if (urlprefix === '/default' || urlprefix === '/undefined')
-      urlprefix = '';
+    var urlprefix = (typeof url_prefix !== 'undefined') ? url_prefix : '';
     var tmp = {};
     tmp[reportkey] = data;
     $http.post(urlprefix + '/settings/', angular.toJson(tmp))

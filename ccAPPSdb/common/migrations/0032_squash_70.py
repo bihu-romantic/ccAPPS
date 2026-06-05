@@ -486,7 +486,7 @@ class Migration(migrations.Migration):
             code=remove_permissions,
         ),
         migrations.RunSQL(
-            sql="\n            insert into common_parameter (name, value, description, lastmodified)\n            select\n            'last_currentdate',value,'This parameter is automatically populated. It stores the date of the last plan execution', now()\n            from common_parameter\n            where name = 'currentdate'\n            ON CONFLICT (name) DO NOTHING\n            ",
+            sql="\n            insert into common_parameter (name, value, description, lastmodified)\n            select\n            'last_currentdate',value,'此参数自动填充，存储最近一次计划执行的日期。', now()\n            from common_parameter\n            where name = 'currentdate'\n            ON CONFLICT (name) DO NOTHING\n            ",
         ),
         migrations.AlterModelOptions(
             name="comment",

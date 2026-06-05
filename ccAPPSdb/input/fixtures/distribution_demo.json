@@ -43864,7 +43864,7 @@
         "fields": {
             "name": "plan.solver",
             "value": "distribution",
-            "description": "Selects the solver to generate the plan. Possible choices are \"heuristic\" and \"distribution\"."
+            "description": "选择生成计划的求解器。可选值：heuristic（启发式）和 distribution（配送）。"
         }
     },
     {
@@ -43904,7 +43904,7 @@
         "fields": {
             "name": "NewStyleOrderEditing",
             "value": "false",
-            "description": "Select whether to use the web service (false, historical default) for plan editing, or new Python code (true). Default is false for backward compatibility."
+            "description": "选择使用 Web 服务（false，历史默认）还是新的 Python 代码（true）进行计划编辑。默认：false（保持向后兼容）。"
         }
     },
     {

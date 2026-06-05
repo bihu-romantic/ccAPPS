@@ -157,6 +157,8 @@ if mode == "WSGI":
         re_path(r"^apps/$", ccAPPSdb.common.views.AppsView.as_view(), name="apps"),
         re_path(r"^about/$", ccAPPSdb.common.views.AboutView, name="about"),
         re_path(r"^scenarios/$", ccAPPSdb.common.views.ScenarioView, name="scenarios"),
+        # Supply chain path data API for dashboard widget
+        re_path(r"^supplychain-path-data/$", ccAPPSdb.common.views.SupplyChainPathData),
         # Forgotten password
         re_path(
             r"^reset_password_confirm/(?P<uidb64>[0-9A-Za-z]+)-(?P<token>.+)/$",

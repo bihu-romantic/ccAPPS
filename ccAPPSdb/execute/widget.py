@@ -30,9 +30,9 @@ from ccAPPSdb.common.dashboard import Dashboard, Widget
 @Dashboard.register
 class ExecuteWidget(Widget):
     name = "execute"
-    title = _("Create a plan")
+    title = _("创建计划")
     permissions = (("auth.generate_plan", "Can generate plans"),)
-    tooltip = _("Generate a constrained plan")
+    tooltip = _("生成一个遵守所有约束的供应计划")
     asynchronous = True
     repeat = True
     size = 'md'

@@ -26,7 +26,7 @@ body.assistant-layout {
 
 #assistant-splitter:hover,
 #assistant-splitter.dragging {
-  background: #387a8c;
+  background: #ff6d00;
 }
 
 /* Chat panel - right side */
@@ -61,7 +61,7 @@ body.assistant-layout {
   transform: translateY(-50%);
   width: 36px;
   height: 80px;
-  background: #387a8c;
+  background: #ff6d00;
   color: #fff;
   border-radius: 6px 0 0 6px;
   cursor: pointer;
@@ -75,7 +75,7 @@ body.assistant-layout {
 }
 
 #assistant-reopen:hover {
-  background: #2c6575;
+  background: #e65100;
 }
 
 /* Chat header */
@@ -84,7 +84,7 @@ body.assistant-layout {
   align-items: center;
   justify-content: space-between;
   padding: 9px 14px;
-  background: #387a8c;
+  background: #ff6d00;
   color: #fff;
   font-weight: 600;
   font-size: 0.9rem;
@@ -133,7 +133,7 @@ body.assistant-layout {
 }
 
 .assistant-message-user .assistant-message-content {
-  background: #387a8c;
+  background: #ff6d00;
   color: #fff;
   border-radius: 14px 14px 4px 14px;
 }
@@ -208,8 +208,8 @@ body.assistant-layout {
 }
 
 .assistant-input:focus {
-  border-color: #387a8c;
-  box-shadow: 0 0 0 2px rgba(56,122,140,0.15);
+  border-color: #ff6d00;
+  box-shadow: 0 0 0 2px rgba(255,109,0,0.2);
 }
 
 .assistant-send {
@@ -217,7 +217,7 @@ body.assistant-layout {
   height: 36px;
   border: none;
   border-radius: 50%;
-  background: #387a8c;
+  background: #ff6d00;
   color: #fff;
   cursor: pointer;
   display: flex;
@@ -228,7 +228,7 @@ body.assistant-layout {
 }
 
 .assistant-send:hover {
-  background: #2c6575;
+  background: #e65100;
 }
 
 .assistant-send:active {
@@ -293,14 +293,14 @@ body.assistant-layout {
 
 .assistant-confirm-icon {
   font-size: 2.8rem;
-  color: #387a8c;
+  color: #ff6d00;
   margin-bottom: 10px;
 }
 
 .assistant-confirm-title {
   font-size: 1.1rem;
   font-weight: 700;
-  color: #387a8c;
+  color: #ff6d00;
   margin-bottom: 12px;
 }
 
@@ -314,7 +314,7 @@ body.assistant-layout {
 .assistant-confirm-btn {
   display: inline-block;
   padding: 10px 28px;
-  background: #387a8c;
+  background: #ff6d00;
   color: #fff;
   border: none;
   border-radius: 6px;
@@ -325,7 +325,7 @@ body.assistant-layout {
 }
 
 .assistant-confirm-btn:hover {
-  background: #2c6575;
+  background: #e65100;
 }
 
 /* Mobile: stack vertically */
