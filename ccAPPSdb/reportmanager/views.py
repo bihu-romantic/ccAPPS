@@ -114,15 +114,15 @@ class ReportList(GridReport):
     help_url = "user-interface/report-manager.html"
     message_when_empty = Template(
         """
-        <h3>You didn't find the exact report you need? Do not despair!</h3>
+        <h3>没有找到你需要的报告？别担心！</h3>
         <br>
-        You can add custom reports by writing a SQL query.<br>
+        你可以通过编写 SQL 查询来添加自定义报告。<br>
         <br>
-        Your custom report will show up in the navigation menu.<br>
-        It will have the same filter, sort and export functionalities as all other reports.<br>
-        You can choose to keep the report private or share it with other users.<br>
+        你的自定义报告将显示在导航菜单中。<br>
+        它将拥有与其他报告相同的筛选、排序和导出功能。<br>
+        你可以选择将报告设为私有或与其他用户共享。<br>
         <br><br>
-        <a href="{{request.prefix}}/data/reportmanager/sqlreport/add/" class="btn btn-primary">Add custom report</a>
+        <a href="{{request.prefix}}/data/reportmanager/sqlreport/add/" class="btn btn-primary">添加自定义报告</a>
         <br>
         """
     )

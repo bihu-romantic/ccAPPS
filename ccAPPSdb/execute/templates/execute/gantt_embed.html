@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% trans "Gantt Chart" %}</title>
+<title>甘特图</title>
 <link rel="stylesheet" href="{{STATIC_URL}}font-awesome.min.css">
 <link rel="stylesheet" href="{{STATIC_URL}}bootstrap.min.css">
 <style>
@@ -64,13 +64,13 @@ body>.pe-toolbar button{padding:4px 8px;font-size:12px}
   <div style="position:relative;display:inline-block">
     <button class="pe-gear-btn" id="pe-gear-btn" onclick="toggleGearMenu()" data-bs-toggle="tooltip" title="{% trans 'Settings' %}"><span class="fa fa-cog"></span></button>
     <div class="pe-gear-menu" id="pe-gear-menu" style="display:none;position:absolute;right:0;top:100%;margin-top:4px;background:#fff;border:1px solid #dee2e6;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.12);z-index:1050;min-width:360px;padding:12px">
-      <div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:6px;text-transform:uppercase">{% trans "Color Scheme" %}</div>
+      <div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:6px;text-transform:uppercase">配色方案</div>
       <select id="pe-gear-color-scheme" onchange="onGearColorSchemeChange()" style="width:100%;padding:6px 8px;font-size:12px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;margin-bottom:4px">
-        <option value="delay">{% trans "Color By Delay" %}</option>
-        <option value="op_category">{% trans "Color By Operation Category" %}</option>
+        <option value="delay">按延迟着色</option>
+        <option value="op_category">按工序类别着色</option>
       </select>
       <div style="border-top:1px solid #e9ecef;padding-top:8px;margin-top:8px">
-        <div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:6px;text-transform:uppercase">{% trans "Order Types" %}</div>
+        <div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:6px;text-transform:uppercase">订单类型</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px" id="pe-type-checks">
           <label style="font-size:12px;cursor:pointer;display:flex;align-items:center;gap:3px;padding:2px 6px;border:1px solid #e9ecef;border-radius:4px;background:#f8f9fa"><input type="checkbox" value="MO" checked onchange="onTypeFilterChange()"> MO</label>
           <label style="font-size:12px;cursor:pointer;display:flex;align-items:center;gap:3px;padding:2px 6px;border:1px solid #e9ecef;border-radius:4px;background:#f8f9fa"><input type="checkbox" value="DO" onchange="onTypeFilterChange()"> DO</label>
@@ -80,7 +80,7 @@ body>.pe-toolbar button{padding:4px 8px;font-size:12px}
         </div>
       </div>
       <div style="border-top:1px solid #e9ecef;padding-top:8px;margin-top:8px">
-        <div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:6px;text-transform:uppercase">{% trans "Inventory" %}</div>
+        <div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:6px;text-transform:uppercase">库存</div>
         <select id="pe-item-select" onchange="onItemChange()" style="width:100%;padding:4px 8px;font-size:12px;border:1px solid #cbd5e1;border-radius:4px;margin-bottom:6px"><option value="">--</option></select>
         <div style="display:flex;align-items:center;gap:4px"><span style="font-size:10px;color:#94a3b8">@</span><select id="pe-loc-select" onchange="onLocChange()" style="flex:1;padding:4px 8px;font-size:12px;border:1px solid #cbd5e1;border-radius:4px"><option value="">--</option></select></div>
       </div>
@@ -731,7 +731,7 @@ function _reRenderCombinedGantt(target) {
     if (now2 >= minT && now2 <= maxT) {
         var tx2 = (now2 - minT) / span * w;
         gridOverlayParts.push('<div style="position:absolute;top:0;bottom:0;left:' + tx2 + 'px;width:0;border-left:1px dashed #94a3b8;z-index:5"></div>');
-        gridOverlayParts.push('<div style="position:absolute;top:2px;left:' + (tx2 + 4) + 'px;font-size:10px;color:#64748b;font-weight:500;z-index:5">{% trans "Today" %}</div>');
+        gridOverlayParts.push('<div style="position:absolute;top:2px;left:' + (tx2 + 4) + 'px;font-size:10px;color:#64748b;font-weight:500;z-index:5">今天</div>');
     }
     gridOverlayParts.push('</div>');
     var gridOverlay = gridOverlayParts.join("");
@@ -743,7 +743,7 @@ function _reRenderCombinedGantt(target) {
     }
     target.innerHTML = '<div class="pe-gantt-board">' +
         '<div class="pe-gantt-labels-col" style="flex:0 0 ' + (_peLeftColWidth || 260) + 'px;min-width:' + (_peLeftColWidth || 260) + 'px">' + labelsHtml.join("") + '</div>' +
-        '<div class="pe-gantt-col-resizer" id="cg-col-resizer" title="{% trans "Drag to resize" %}"></div>' +
+        '<div class="pe-gantt-col-resizer" id="cg-col-resizer" title="拖动调整大小"></div>' +
         '<div class="pe-gantt-time-col" id="cg-time-col"><div style="width:' + w + 'px;position:relative">' + gridOverlay + timeHtml.join("") + '</div></div>' +
         '</div>';
     var boardEl = target.querySelector(".pe-gantt-board");
@@ -789,7 +789,7 @@ function _reRenderCombinedGantt(target) {
 function renderCombinedGantt() {
     var target = document.getElementById("combined-gantt-content");
     if (!target) return;
-    target.innerHTML = '<div class="pe-gantt-empty">{% trans "Loading..." %}</div>';
+    target.innerHTML = '<div class="pe-gantt-empty">加载中...</div>';
     Promise.all([
         fetch(_buildGanttUrl("resource"), {credentials:"same-origin"}).then(function(r) { if (!r.ok) throw new Error("HTTP "+r.status); return r.json(); }),
         fetch(_buildGanttUrl("demand"), {credentials:"same-origin"}).then(function(r) { if (!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
@@ -812,8 +812,8 @@ function renderCombinedGantt() {
         });
         window._resourceOpRangeByRef = opRangeByRef;
         var unified = _buildGlobalTimeRange(resRows, demGroups, demandGroups);
-        if (!unified && parsed.length === 0) { target.innerHTML = '<div class="pe-gantt-empty">{% trans "No data found" %}</div>'; return; }
-        if (!unified) { target.innerHTML = '<div class="pe-gantt-empty">{% trans "No valid dates" %}</div>'; return; }
+        if (!unified && parsed.length === 0) { target.innerHTML = '<div class="pe-gantt-empty">未找到数据</div>'; return; }
+        if (!unified) { target.innerHTML = '<div class="pe-gantt-empty">无有效日期</div>'; return; }
         window._combinedUnified = { minT: unified.minT, maxT: unified.maxT };
         window._combinedOpDueMap = _buildOpDueMap(demandGroups);
         window._combinedResRows = resRows;
@@ -834,7 +834,7 @@ function renderCombinedGantt() {
         }
         return _reRenderCombinedGantt(target);
     }).catch(function(err) {
-        target.innerHTML = '<div class="pe-gantt-empty">{% trans "Failed to load" %}: ' + _esc(err.message || err) + '</div>';
+        target.innerHTML = '<div class="pe-gantt-empty">加载失败: ' + _esc(err.message || err) + '</div>';
     });
 }
 

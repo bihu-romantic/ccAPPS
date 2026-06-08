@@ -236,48 +236,25 @@ class SupplyPlanning(PlanTask):
             constraint = parseConstraints(os.environ["CCAPPS_CONSTRAINT"])
         except Exception:
             constraint = 4 + 16 + 32  # Default is with all constraints enabled
-        # Choose solver: ACO (default) or MRP heuristic
-        use_aco = Parameter.getValue("plan.solver", database, "aco").lower() != "heuristic"
-        if use_aco:
-            cls.solver = ccAPPS.solverACO(
-                constraints=constraint,
-                plantype=plantype,
-                loglevel=loglevel,
-                lazydelay=int(Parameter.getValue("lazydelay", database, "86400")),
-                minimumdelay=int(Parameter.getValue("plan.minimumdelay", database, "3600")),
-                rotateresources=(
-                    Parameter.getValue("plan.rotateResources", database, "true").lower()
-                    == "true"
-                ),
-                iterationmax=int(Parameter.getValue("plan.iterationmax", database, "0")),
-                resourceiterationmax=int(
-                    Parameter.getValue("plan.resourceiterationmax", database, "500")
-                ),
-                administrativeleadtime=86400
-                * float(Parameter.getValue("plan.administrativeLeadtime", database, "0")),
-                autofence=86400
-                * float(Parameter.getValue("plan.autoFenceOperations", database, "0")),
-            )
-        else:
-            cls.solver = ccAPPS.solver_mrp(
-                constraints=constraint,
-                plantype=plantype,
-                loglevel=loglevel,
-                lazydelay=int(Parameter.getValue("lazydelay", database, "86400")),
-                minimumdelay=int(Parameter.getValue("plan.minimumdelay", database, "3600")),
-                rotateresources=(
-                    Parameter.getValue("plan.rotateResources", database, "true").lower()
-                    == "true"
-                ),
-                iterationmax=int(Parameter.getValue("plan.iterationmax", database, "0")),
-                resourceiterationmax=int(
-                    Parameter.getValue("plan.resourceiterationmax", database, "500")
-                ),
-                administrativeleadtime=86400
-                * float(Parameter.getValue("plan.administrativeLeadtime", database, "0")),
-                autofence=86400
-                * float(Parameter.getValue("plan.autoFenceOperations", database, "0")),
-            )
+        cls.solver = ccAPPS.solver_mrp(
+            constraints=constraint,
+            plantype=plantype,
+            loglevel=loglevel,
+            lazydelay=int(Parameter.getValue("lazydelay", database, "86400")),
+            minimumdelay=int(Parameter.getValue("plan.minimumdelay", database, "3600")),
+            rotateresources=(
+                Parameter.getValue("plan.rotateResources", database, "true").lower()
+                == "true"
+            ),
+            iterationmax=int(Parameter.getValue("plan.iterationmax", database, "0")),
+            resourceiterationmax=int(
+                Parameter.getValue("plan.resourceiterationmax", database, "500")
+            ),
+            administrativeleadtime=86400
+            * float(Parameter.getValue("plan.administrativeLeadtime", database, "0")),
+            autofence=86400
+            * float(Parameter.getValue("plan.autoFenceOperations", database, "0")),
+        )
         if hasattr(cls, "debugResource"):
             cls.solver.userexit_resource = cls.debugResource
         if hasattr(cls, "debugDemand"):
@@ -312,6 +289,19 @@ class SupplyPlanning(PlanTask):
                 )
             else:
                 logger.info("Solver completed")
+            # Run ACO after MRP if enabled
+            if Parameter.getValue("plan.solver", database, "aco").lower() != "heuristic":
+                try:
+                    logger.info("Running ACO optimization...")
+                    thread2 = Thread(target=ccAPPS.run_aco)
+                    thread2.start()
+                    thread2.join(timeout=120)
+                    if thread2.is_alive():
+                        logger.warning("ACO timed out after 120 seconds")
+                    else:
+                        logger.info("ACO completed")
+                except Exception as e:
+                    logger.warning("ACO failed: %s" % e)
         finally:
             ccAPPS.settings.loglimit = 0
         thread = Thread(target=ccAPPS.printsize)

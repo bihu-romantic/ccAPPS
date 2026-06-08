@@ -176,5 +176,8 @@ class SolverACO : public SolverCreate {
   mt19937 rng_;
 };
 
+/* Global function exposed to Python as ccAPPS.run_aco(). */
+PyObject* run_aco(PyObject*, PyObject*);
+
 }  // namespace ccAPPS
 #endif  // SOLVERACO_H

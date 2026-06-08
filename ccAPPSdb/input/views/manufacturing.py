@@ -1159,10 +1159,10 @@ class SubOperationList(GridReport):
     frozenColumns = 1
     help_url = "model-reference/suboperations.html"
     message_when_empty = Template("""
-        <h3>Define suboperations</h3>
+        <h3>定义子工序</h3>
         <br>
-        This table is DEPRECATED.<br><br>
-        Instead, use the field "owner" in the operation table to define steps in a routing operation.<br>
+        此表已弃用。<br><br>
+        请改用工序表中的 "owner" 字段来定义工艺路线中的步骤。<br>
         <br>
         """)
     rows = (
@@ -1422,21 +1422,19 @@ class OperationDependencyList(GridReport):
     frozenColumns = 1
     help_url = "model-reference/operation-dependencies.html"
     message_when_empty = Template("""
-        <h3>Define operation dependencies</h3>
+        <h3>定义工序依赖关系</h3>
         <br>
-        This table defines relations between operations.<br>
-        Use this table for:<br>
+        此表定义了工序之间的关系。<br>
+        此表用于：<br>
         <br>
         <br>1.<br>
-        Define which <b>steps in a routing operation can be executed in parallel</b>.<br>
-        You use the dependencies to define which operation(s) is a prerequisite for another.<br>
+        定义工艺路线中<b>哪些步骤可以并行执行</b>。<br>
+        使用依赖关系定义哪些工序是其他工序的前提条件。<br>
         <br>
         <br>2.<br>
-        Define relations between <b>different steps in a project-oriented business</b>.<br>
-        In most manufacturing oriented business, a bill-of-material is used to define
-        different levels in the product structure.<br>
-        In a project-oriented business you can directly link subprojects without
-        defining intermediate items.<br>
+        定义<b>项目导向型业务中不同步骤之间的关系</b>。<br>
+        在大多数制造导向型业务中，使用物料清单来定义产品结构中的不同层级。<br>
+        在项目导向型业务中，可以直接链接子项目而无需定义中间物料。<br>
         <br>
         <br>
         """)

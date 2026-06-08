@@ -1760,6 +1760,7 @@ class PlanEdit(GridReport):
     )
     editable = True
     multiselect = True
+    filterable = False
     frozenColumns = 1
     height = 250
     default_sort = (0, "asc")

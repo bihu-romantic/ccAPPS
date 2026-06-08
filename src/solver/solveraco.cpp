@@ -101,6 +101,16 @@ static PyObject* solverACO_getRunMRP(PyObject* self, PyObject*) {
   return PyBool_FromLong(solver->getRunMRP() ? 1 : 0);
 }
 
+/* Global function: run ACO on constrained resources.
+ * Called from Python as ccAPPS.run_aco(). */
+PyObject* run_aco(PyObject*, PyObject*) {
+  SolverACO aco;
+  aco.setRunMRP(false);
+  void* v = nullptr;
+  aco.solve(v);
+  Py_RETURN_NONE;
+}
+
 int SolverACO::initialize() {
   metadata = MetaClass::registerClass<SolverACO>("solver", "solver_aco",
                                                   Object::create<SolverACO>);
@@ -109,12 +119,27 @@ int SolverACO::initialize() {
   x.setName("solverACO");
   x.setDoc("ccAPPS ant colony optimization solver");
   x.supportgetattro(); x.supportsetattro(); x.supportcreate(SolverACO::create);
+
+  // Inherit essential methods from SolverCreate (same as solver_mrp)
+  x.addMethod("solve",
+              static_cast<PyObject* (*)(PyObject*, PyObject*, PyObject*)>(
+                  SolverCreate::solve),
+              METH_VARARGS, "run the solver");
+  x.addMethod("commit", SolverCreate::commit, METH_NOARGS,
+              "commit the plan changes");
+  x.addMethod("rollback", SolverCreate::rollback, METH_NOARGS,
+              "rollback the plan changes");
+  x.addMethod("markAutofence", SolverCreate::markAutofence, METH_NOARGS,
+              "mark the autofence of buffers");
+
+  // ACO-specific methods
   x.addMethod("initPheromone", solverACO_initPheromone, METH_VARARGS,
               "Initialize pheromone matrix for a resource");
   x.addMethod("setRunMRP", solverACO_setRunMRP, METH_VARARGS,
               "Enable/disable MRP propagation after ACO sequencing");
   x.addMethod("getRunMRP", solverACO_getRunMRP, METH_NOARGS,
               "Check if MRP propagation is enabled");
+
   SolverACO::metadata->setPythonClass(x);
   return x.typeReady();
 }
@@ -340,9 +365,20 @@ AntSolution SolverACO::constructSolution(
     }
     OperationPlan* next = unvisited[sel];
     Duration setup = computeSetupTime(current, next);
-    Date start = max(cur + setup, earliestStart(next, res));
+    Date rawStart = max(cur + setup, earliestStart(next, res));
     Duration dur = estimateOperationDuration(next, res);
-    Date end = start + dur;
+    // Apply calendar constraints: map start+duration through
+    // operation/resource/location availability calendars
+    Date start, end;
+    if (next->getOperation()) {
+      DateRange range = next->getOperation()->calculateOperationTime(
+          next, rawStart, dur, true);
+      start = range.getStart();
+      end = range.getEnd();
+    } else {
+      start = rawStart;
+      end = rawStart + dur;
+    }
 
     ant.sequences[res].push_back(next);
     ant.startDates[res].push_back(start);
@@ -416,9 +452,19 @@ AntSolution SolverACO::constructJointSolution(
 
       CandidateOp chosen = pool[sel];
       Duration setup = computeSetupTime(prevOp[res], chosen.op);
-      Date start = max(curTime[res] + setup, chosen.earliestStart);
+      Date rawStart = max(curTime[res] + setup, chosen.earliestStart);
       Duration dur = estimateOperationDuration(chosen.op, res);
-      Date end = start + dur;
+      // Apply calendar constraints
+      Date start, end;
+      if (chosen.op->getOperation()) {
+        DateRange range = chosen.op->getOperation()->calculateOperationTime(
+            chosen.op, rawStart, dur, true);
+        start = range.getStart();
+        end = range.getEnd();
+      } else {
+        start = rawStart;
+        end = rawStart + dur;
+      }
 
       ant.sequences[res].push_back(chosen.op);
       ant.startDates[res].push_back(start);
@@ -459,8 +505,18 @@ void SolverACO::localSearch(const Resource*, AntSolution& sol) {
         Date ct = Plan::instance().getCurrent();
         const OperationPlan* prev = nullptr;
         for (auto* op : cseq) {
-          Date start = max(ct + computeSetupTime(prev, op), earliestStart(op, res));
-          Date end = start + estimateOperationDuration(op, res);
+          Date rawStart = max(ct + computeSetupTime(prev, op), earliestStart(op, res));
+          Duration dur = estimateOperationDuration(op, res);
+          Date start, end;
+          if (op->getOperation()) {
+            DateRange range = op->getOperation()->calculateOperationTime(
+                op, rawStart, dur, true);
+            start = range.getStart();
+            end = range.getEnd();
+          } else {
+            start = rawStart;
+            end = rawStart + dur;
+          }
           cs.push_back(start); ce.push_back(end);
           prev = op; ct = end;
         }
@@ -494,8 +550,18 @@ void SolverACO::localSearchJoint(AntSolution& sol) {
           Date ct = Plan::instance().getCurrent();
           const OperationPlan* prev = nullptr;
           for (auto* op : cseq) {
-            Date start = max(ct + computeSetupTime(prev, op), earliestStart(op, res));
-            Date end = start + estimateOperationDuration(op, res);
+            Date rawStart = max(ct + computeSetupTime(prev, op), earliestStart(op, res));
+            Duration dur = estimateOperationDuration(op, res);
+            Date start, end;
+            if (op->getOperation()) {
+              DateRange range = op->getOperation()->calculateOperationTime(
+                  op, rawStart, dur, true);
+              start = range.getStart();
+              end = range.getEnd();
+            } else {
+              start = rawStart;
+              end = rawStart + dur;
+            }
             cs.push_back(start); ce.push_back(end);
             prev = op; ct = end;
           }

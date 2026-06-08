@@ -26,6 +26,7 @@
 #include "forecast/forecast.h"
 #include "ccAPPS.h"
 #include "ccAPPS/database.h"
+#include "ccAPPS/solveraco.h"
 #include "ccAPPSinterface.h"
 using namespace ccAPPS;
 
@@ -56,6 +57,9 @@ void ccAPPSInitialize(bool procesInitializationFiles) {
     PythonInterpreter::registerGlobalMethod(
         "runDatabaseThread", runDatabaseThread, METH_VARARGS,
         "Start a thread to persist data in a PostgreSQL database.");
+    PythonInterpreter::registerGlobalMethod(
+        "run_aco", run_aco, METH_NOARGS,
+        "Run ACO optimization on all bottleneck resources.");
 
     // Initialize the forecast module
     int nok = 0;
