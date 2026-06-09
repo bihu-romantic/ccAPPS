@@ -300,6 +300,14 @@ class SupplyPlanning(PlanTask):
                         logger.warning("ACO timed out after 120 seconds")
                     else:
                         logger.info("ACO completed")
+                        # Persist ACO's in-memory changes to the database.
+                        # ACO modifies operation plan dates via op->setStart()
+                        # in C++ memory. Without an explicit commit, those
+                        # changes are lost when the process exits.
+                        try:
+                            cls.solver.commit()
+                        except Exception:
+                            pass
                 except Exception as e:
                     logger.warning("ACO failed: %s" % e)
         finally:

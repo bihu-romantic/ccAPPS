@@ -108,6 +108,12 @@ PyObject* run_aco(PyObject*, PyObject*) {
   aco.setRunMRP(false);
   void* v = nullptr;
   aco.solve(v);
+  // Persist ACO's schedule changes. applyBestSolution adds
+  // CommandMoveOperationPlan commands to the solver's command manager.
+  // Without an explicit commit, those commands are lost when the
+  // temporary SolverACO instance is destroyed.
+  if (aco.getCommandManager())
+    aco.getCommandManager()->commit();
   Py_RETURN_NONE;
 }
 
@@ -272,6 +278,32 @@ Date SolverACO::earliestStart(const OperationPlan* op, const Resource* res) cons
 }
 
 // ==========================================================================
+// Factor 5b: Dynamic material availability clock
+// Computes earliest start based on the dynamic material clock updated during
+// ant construction. As the ant places operations across resources, the
+// material clock tracks when each buffer receives material from upstream
+// operations already scheduled. This method extracts the constraint: an
+// operation consuming from buffer B cannot start before materialAvailable[B].
+// The static earliestStart snapshot still handles non-ACO constraints
+// (PO arrivals, pre-existing stock) that the clock hasn't captured.
+// ==========================================================================
+
+Date SolverACO::dynamicEarliestStart(
+    const OperationPlan* op,
+    const unordered_map<const Buffer*, Date>& materialAvailable) const {
+  Date earliest = Plan::instance().getCurrent();
+  for (auto fp = op->beginFlowPlans(); fp != op->endFlowPlans(); ++fp) {
+    if (fp->getQuantity() >= 0.0) continue;  // skip producing flows
+    const Buffer* buf = fp->getBuffer();
+    if (!buf) continue;
+    auto it = materialAvailable.find(buf);
+    if (it != materialAvailable.end() && it->second > earliest)
+      earliest = it->second;
+  }
+  return earliest;
+}
+
+// ==========================================================================
 // Factor 4: Cross-resource upstream blocking
 // ==========================================================================
 
@@ -291,15 +323,57 @@ bool SolverACO::isUpstreamBlocked(
            lp != producer->endLoadPlans(); ++lp) {
         const Resource* prodRes = lp->getResource();
         if (!prodRes || !prodRes->getConstrained()) continue;
+        Date refTime = Plan::instance().getCurrent();
         auto it = resourceTimes.find(prodRes);
-        if (it == resourceTimes.end()) continue;
-        if (producer->getEnd() > it->second &&
+        if (it != resourceTimes.end()) refTime = it->second;
+        if (producer->getEnd() > refTime &&
             producer->getEnd() != Date::infiniteFuture)
           return true;
       }
     }
   }
   return false;
+}
+
+// ==========================================================================
+// Factor 4b: Continuous upstream wait time
+// Instead of a binary blocked/not-blocked signal, returns the cumulative
+// wait duration until all upstream producers on constrained resources
+// have completed. Used to compute a continuous readiness factor for
+// smoother probability landscapes in ant construction.
+// ==========================================================================
+
+Duration SolverACO::computeUpstreamWait(
+    const OperationPlan* op,
+    const unordered_map<const Resource*, Date>& resourceTimes) const {
+  if (!op) return Duration(0L);
+  Duration totalWait(0L);
+  for (auto fl = op->beginFlowPlans(); fl != op->endFlowPlans(); ++fl) {
+    if (fl->getQuantity() >= 0.0) continue;
+    Buffer* buf = fl->getBuffer();
+    if (!buf) continue;
+    for (auto pfp = buf->getFlowPlans().begin();
+         pfp != buf->getFlowPlans().end(); ++pfp) {
+      OperationPlan* producer = pfp->getOperationPlan();
+      if (!producer || producer == op) continue;
+      for (auto lp = producer->beginLoadPlans();
+           lp != producer->endLoadPlans(); ++lp) {
+        const Resource* prodRes = lp->getResource();
+        if (!prodRes || !prodRes->getConstrained()) continue;
+        // Use tracked ACO clock if available; otherwise fall back to plan
+        // current time (resource not being optimized — MRP schedule untouched).
+        Date refTime = Plan::instance().getCurrent();
+        auto it = resourceTimes.find(prodRes);
+        if (it != resourceTimes.end()) refTime = it->second;
+        if (producer->getEnd() > refTime &&
+            producer->getEnd() != Date::infiniteFuture) {
+          Duration wait = producer->getEnd() - refTime;
+          if (wait > totalWait) totalWait = wait;
+        }
+      }
+    }
+  }
+  return totalWait;
 }
 
 // ==========================================================================
@@ -396,13 +470,23 @@ AntSolution SolverACO::constructSolution(
   const OperationPlan* current = nullptr;
   Date cur = Plan::instance().getCurrent();
 
+  // Build a minimal resource-times map so computeUpstreamWait can check
+  // upstream dependencies on other constrained resources.
+  unordered_map<const Resource*, Date> rt;
+  rt[res] = cur;
+
   while (!unvisited.empty()) {
     vector<double> probs(unvisited.size(), 0.0);
     double total = 0.0;
     for (size_t i = 0; i < unvisited.size(); ++i) {
+      // Continuous readiness: 1/(1+waitHours) for upstream dependencies
+      Duration upWait = computeUpstreamWait(unvisited[i], rt);
+      double waitH = upWait > Duration(0L)
+          ? static_cast<double>(upWait.getSeconds()) / 3600.0 : 0.0;
+      double readiness = 1.0 / (1.0 + waitH);
       double tau = pheromones_[res].get(current, unvisited[i]);
       if (tau <= 0.0) tau = config_.tau0;
-      double eta = heuristic(current, unvisited[i]);
+      double eta = heuristic(current, unvisited[i]) * readiness;
       probs[i] = pow(tau, config_.alpha) * pow(eta, config_.beta);
       total += probs[i];
     }
@@ -437,6 +521,7 @@ AntSolution SolverACO::constructSolution(
     unvisited.erase(unvisited.begin() + sel);
     current = next;
     cur = end;
+    rt[res] = cur;  // keep resource clock in sync for upstream wait checks
   }
   return ant;
 }
@@ -468,6 +553,14 @@ AntSolution SolverACO::constructJointSolution(
     prevOp[r] = nullptr;
   }
 
+  // Dynamic material availability clock: tracks when each buffer receives
+  // material from operations already scheduled during this ant's construction.
+  // Initialized empty — the static earliestStart snapshot handles pre-ACO
+  // material constraints (PO arrivals, on-hand stock). As operations are
+  // placed, producing flowplans update this clock so downstream operations
+  // on other resources see the updated material timing.
+  unordered_map<const Buffer*, Date> materialAvailable;
+
   // Total remaining candidates
   size_t remaining = allCandidates.size();
   while (remaining > 0) {
@@ -481,11 +574,17 @@ AntSolution SolverACO::constructJointSolution(
       vector<double> probs(pool.size(), 0.0);
       double total = 0.0;
       for (size_t i = 0; i < pool.size(); ++i) {
-        // Penalize if upstream is not ready
-        double blockFactor = isUpstreamBlocked(pool[i].op, curTime) ? 0.01 : 1.0;
+        // Continuous readiness factor: replaces binary isUpstreamBlocked.
+        // Computes how long the operation must wait for upstream producers
+        // on other constrained resources, then maps to [~0, 1.0] via
+        // 1/(1+waitHours). Short waits → near 1.0, long waits → near 0.
+        Duration upWait = computeUpstreamWait(pool[i].op, curTime);
+        double waitH = upWait > Duration(0L)
+            ? static_cast<double>(upWait.getSeconds()) / 3600.0 : 0.0;
+        double readiness = 1.0 / (1.0 + waitH);
         double tau = pheromones_[res].get(prevOp[res], pool[i].op);
         if (tau <= 0.0) tau = config_.tau0;
-        double eta = heuristic(prevOp[res], pool[i].op) * blockFactor;
+        double eta = heuristic(prevOp[res], pool[i].op) * readiness;
         probs[i] = pow(tau, config_.alpha) * pow(eta, config_.beta);
         total += probs[i];
       }
@@ -502,7 +601,11 @@ AntSolution SolverACO::constructJointSolution(
 
       CandidateOp chosen = pool[sel];
       Duration setup = computeSetupTime(prevOp[res], chosen.op);
-      Date rawStart = max(curTime[res] + setup, chosen.earliestStart);
+      // Factor 5: Combine static earliestStart with dynamic material clock.
+      // The dynamic clock captures material availability changes caused by
+      // operations already placed by this ant on other resources.
+      Date matEarliest = dynamicEarliestStart(chosen.op, materialAvailable);
+      Date rawStart = max({curTime[res] + setup, chosen.earliestStart, matEarliest});
       Duration dur = estimateOperationDuration(chosen.op, res);
       // Apply calendar constraints
       Date start, end;
@@ -537,6 +640,20 @@ AntSolution SolverACO::constructJointSolution(
           }
         }
       }
+      // Update material availability clock: for each buffer this operation
+      // produces into, record when material becomes available. Downstream
+      // operations on other resources will pick this up via
+      // dynamicEarliestStart().
+      for (auto fp = chosen.op->beginFlowPlans();
+           fp != chosen.op->endFlowPlans(); ++fp) {
+        if (fp->getQuantity() < 0.0) continue;  // skip consuming flows
+        const Buffer* buf = fp->getBuffer();
+        if (!buf) continue;
+        auto it = materialAvailable.find(buf);
+        if (it == materialAvailable.end() || end > it->second)
+          materialAvailable[buf] = end;
+      }
+
       prevOp[res] = chosen.op;
       curTime[res] = end;
       progress = true;
@@ -835,6 +952,7 @@ void SolverACO::solve(const Resource* res, void* v) {
     }
   }
   applyBestSolution(best);
+  lastBestFitness_ = best.fitness;
   if (getLogLevel() > 0)
     logger << indentlevel << "ACO on '" << res->getName()
            << "': " << plans.size() << " plans, fitness=" << best.fitness << "\n";
@@ -889,6 +1007,8 @@ void SolverACO::solveJoint(const vector<const Resource*>& resources) {
   }
 
   applyBestSolution(best);
+  lastBestFitness_ = best.fitness;
+  stagnationOccurred_ = (stag >= config_.stagnation_limit);
   if (getLogLevel() > 0)
     logger << indentlevel << "ACO joint: " << resources.size() << " resources, "
            << candidates.size() << " candidates, fitness=" << best.fitness << "\n";
@@ -899,32 +1019,124 @@ void SolverACO::solveJoint(const vector<const Resource*>& resources) {
 // ==========================================================================
 
 void SolverACO::solve(void* v) {
-  vector<const Resource*> bottleneck;
-  for (auto& res : Resource::all()) {
-    if (!res.getConstrained()) continue;
-
-    if (res.isGroup()) {
-      // Expand resource group: add individual constrained child resources
-      for (auto m = res.getMembers(); m != Resource::end(); ++m) {
-        if (!m->isGroup() && m->getConstrained()) {
-          vector<OperationPlan*> plans;
-          collectResourcePlans(&*m, plans);
-          if (plans.size() >= 2) bottleneck.push_back(&*m);
+  // Collect all constrained resources with ≥2 operation plans.
+  // Extracted as a lambda so the bottleneck set can be refreshed after each
+  // MRP pass (MRP may create new supply ops, change resource assignments,
+  // or update material availability dates).
+  auto collectBottlenecks = [&]() -> vector<const Resource*> {
+    vector<const Resource*> bn;
+    for (auto& res : Resource::all()) {
+      if (!res.getConstrained()) continue;
+      if (res.isGroup()) {
+        for (auto m = res.getMembers(); m != Resource::end(); ++m) {
+          if (!m->isGroup() && m->getConstrained()) {
+            vector<OperationPlan*> plans;
+            collectResourcePlans(&*m, plans);
+            if (plans.size() >= 2) bn.push_back(&*m);
+          }
         }
+      } else {
+        vector<OperationPlan*> plans;
+        collectResourcePlans(&res, plans);
+        if (plans.size() >= 2) bn.push_back(&res);
       }
-    } else {
-      vector<OperationPlan*> plans;
-      collectResourcePlans(&res, plans);
-      if (plans.size() >= 2) bottleneck.push_back(&res);
     }
+    return bn;
+  };
+
+  vector<const Resource*> bottleneck = collectBottlenecks();
+
+  // Diagnostic: always log that ACO entry was reached
+  if (getLogLevel() >= 0)
+    logger << indentlevel << "ACO: entry, found " << bottleneck.size()
+           << " bottleneck resources\n";
+
+  // No bottleneck resources → nothing for ACO to optimize.
+  if (bottleneck.empty()) {
+    if (config_.runMRP) SolverCreate::solve(v);
+    return;
   }
 
-  if (bottleneck.size() >= 2 && config_.joint_optimization)
-    solveJoint(bottleneck);
-  else if (bottleneck.size() == 1)
-    solve(bottleneck[0], v);
+  double prevFitness = -numeric_limits<double>::max();
 
-  if (config_.runMRP) SolverCreate::solve(v);
+  // Outer loop: ACO → MRP → re-collect → ACO → ... until convergence.
+  // Each MRP pass propagates ACO's schedule changes through material flows
+  // and resolves shortages. The next ACO pass then sees updated material
+  // availability (via earliestStart / dynamicEarliestStart) and can
+  // adjust the schedule accordingly.
+  for (int outerIter = 0; outerIter < config_.aco_mrp_iterations; ++outerIter) {
+    if (getLogLevel() > 1)
+      logger << indentlevel << "ACO↔MRP pass " << (outerIter + 1)
+             << " of " << config_.aco_mrp_iterations << " ("
+             << bottleneck.size() << " bottleneck resources)\n";
+
+    // ---- Phase 1: ACO optimization ----
+    if (bottleneck.size() >= 2 && config_.joint_optimization)
+      solveJoint(bottleneck);
+    else if (bottleneck.size() == 1)
+      solve(bottleneck[0], v);
+    else
+      break;
+
+    // ---- Phase 2: Material propagation ----
+    // ACO has set new start/end dates on operation plans (via
+    // applyBestSolution → CommandMoveOperationPlan). We now need to:
+    //   1. Synchronise flow plan dates with their operation plan dates
+    //   2. Recalculate buffer on-hand profiles
+    //   3. Resolve any material shortages introduced by ACO's resequencing
+    //
+    // SolverCreate::solve(void*) runs the full MRP pipeline: it re-evaluates
+    // all demands and propagates changes through the supply chain. This is
+    // heavier than a material-only propagation but is functionally correct:
+    // MRP respects the operation plan dates already set by ACO and only
+    // creates new supply where shortages exist. A dedicated
+    // propagateMaterialChanges() would be lighter but requires refactoring
+    // the solver infrastructure (TODO for future optimisation).
+    if (config_.runMRP)
+      SolverCreate::solve(v);
+
+    // ---- Convergence check (skip on first and last iteration) ----
+    if (outerIter > 0 && outerIter < config_.aco_mrp_iterations - 1) {
+      double absDenom = max(abs(prevFitness), 1.0);
+      double improvement = (lastBestFitness_ - prevFitness) / absDenom;
+      if (improvement < config_.aco_mrp_improvement) {
+        if (getLogLevel() > 1)
+          logger << indentlevel << "ACO↔MRP converged after "
+                 << (outerIter + 1) << " passes (Δf/|f|="
+                 << improvement << " < " << config_.aco_mrp_improvement
+                 << ")\n";
+        break;
+      }
+    }
+    prevFitness = lastBestFitness_;
+
+    // Last iteration — don't re-collect, we're done.
+    if (outerIter >= config_.aco_mrp_iterations - 1) break;
+
+    // ---- Phase 3: Re-collect bottleneck resources ----
+    // MRP may have changed the landscape: new supply operations created,
+    // resource assignments altered, or dates updated. Re-scan so the
+    // next ACO pass works with fresh data.
+    vector<const Resource*> newBottleneck = collectBottlenecks();
+
+    // Early termination: if the bottleneck set is identical AND the
+    // previous ACO pass stagnated (no improvement within its own
+    // iterations), further passes are unlikely to help.
+    if (newBottleneck.size() == bottleneck.size() && stagnationOccurred_) {
+      bool same = true;
+      for (size_t i = 0; i < newBottleneck.size(); ++i) {
+        if (newBottleneck[i] != bottleneck[i]) { same = false; break; }
+      }
+      if (same) {
+        if (getLogLevel() > 1)
+          logger << indentlevel << "ACO↔MRP: bottleneck set unchanged + "
+                 << "ACO stagnated → stopping after " << (outerIter + 1)
+                 << " passes\n";
+        break;
+      }
+    }
+    bottleneck = move(newBottleneck);
+  }
 }
 
 }  // namespace ccAPPS

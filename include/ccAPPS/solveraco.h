@@ -54,6 +54,8 @@ struct ACOConfig {
   int elite_ants = 3;
   bool runMRP = true;
   bool joint_optimization = true;
+  int aco_mrp_iterations = 2;      // ACO↔MRP outer loops (1 = legacy single-pass)
+  double aco_mrp_improvement = 0.01;  // Min relative fitness gain to continue
 };
 
 /* A candidate operation plan that an ant can select.
@@ -148,6 +150,9 @@ class SolverACO : public SolverCreate {
       const vector<const Resource*>& resources) const;
 
   Date earliestStart(const OperationPlan* op, const Resource* res) const;
+  Date dynamicEarliestStart(
+      const OperationPlan* op,
+      const unordered_map<const Buffer*, Date>& materialAvailable) const;
 
   /* ---- Single-resource (legacy) ---- */
   AntSolution constructSolution(
@@ -171,12 +176,17 @@ class SolverACO : public SolverCreate {
   bool isUpstreamBlocked(
       const OperationPlan* op,
       const unordered_map<const Resource*, Date>& resourceTimes) const;
+  Duration computeUpstreamWait(
+      const OperationPlan* op,
+      const unordered_map<const Resource*, Date>& resourceTimes) const;
   Duration computeSetupTime(const OperationPlan* from,
                             const OperationPlan* to) const;
 
   ACOConfig config_;
   unordered_map<const Resource*, PheromoneMatrix> pheromones_;
   mt19937 rng_;
+  double lastBestFitness_ = -numeric_limits<double>::max();
+  bool stagnationOccurred_ = false;
 };
 
 /* Global function exposed to Python as ccAPPS.run_aco(). */
