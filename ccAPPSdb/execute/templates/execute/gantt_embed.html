@@ -590,8 +590,8 @@ function _initBoardResizer(boardEl) {
 
 // ── Time range helpers ──
 function _computeUnifiedTimeRange(resRows, demGroups) {
-    var minT = null, maxT = null;
-    function _scan(d) { if (d && !isNaN(d)) { if (!minT || d < minT) minT = d; if (!maxT || d > maxT) maxT = d; } }
+    var minT = null, maxT = null, _minValid = new Date(2020, 0, 1);
+    function _scan(d) { if (d && !isNaN(d) && d >= _minValid) { if (!minT || d < minT) minT = d; if (!maxT || d > maxT) maxT = d; } }
     (resRows || []).forEach(function(r) { if (r.startdate) _scan(new Date(r.startdate)); if (r.enddate) _scan(new Date(r.enddate)); });
     Object.keys(demGroups || {}).forEach(function(key) {
         var grp = demGroups[key];
@@ -620,10 +620,8 @@ function _buildGlobalTimeRange(resRows, demGroups, demandGroups) {
         (grp.all_orders || []).forEach(function(o) { if (o.op_start) scan(new Date(o.op_start)); if (o.op_end) scan(new Date(o.op_end)); if (o.date) scan(new Date(o.date)); });
     });
     if (range) {
-        range.minT = new Date(range.minT.getTime() - 86400000 * 17);
-        range.maxT = new Date(range.maxT.getTime() + 86400000 * 14);
-        var minCap = new Date(range.maxT.getTime() - 365 * 86400000);
-        if (range.minT < minCap) range.minT = minCap;
+        range.minT = new Date(range.minT.getTime() - 86400000 * 3);
+        range.maxT = new Date(range.maxT.getTime() + 86400000 * 3);
     }
     return range;
 }
@@ -674,10 +672,8 @@ function _reRenderCombinedGantt(target) {
     var demGroups = window._combinedDemGroups || {};
     var demandGroups = window._combinedDemandGroups || {};
     if (!unified) return;
-    var minT = new Date(unified.minT.getTime() - 86400000 * 17);
-    var maxT = new Date(unified.maxT.getTime() + 86400000 * 10);
-    var minCap = new Date(maxT.getTime() - 365 * 86400000);
-    if (minT < minCap) minT = minCap;
+    var minT = new Date(unified.minT.getTime());
+    var maxT = new Date(unified.maxT.getTime());
     var span = Math.max(maxT - minT, 3600000);
     var baseW = Math.max(target.clientWidth - 24 - (_peLeftColWidth || 260) - 10, 700);
     window._cgBaseW = baseW;

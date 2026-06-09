@@ -1179,10 +1179,8 @@ function _renderItemGroup(targetId, groupKey, groupData, sharedTimeParams) {
             });
         });
         if (!minT) { target.innerHTML = '<div class="pe-pb-empty">无有效日期</div>'; return; }
-        minT = new Date(minT.getTime() - 86400000 * 7);
-        maxT = new Date(maxT.getTime() + 86400000 * 14);
-        var minCap = new Date(maxT.getTime() - 180 * 86400000);
-        if (minT < minCap) minT = minCap;
+        minT = new Date(minT.getTime() - 86400000 * 3);
+        maxT = new Date(maxT.getTime() + 86400000 * 3);
         span = Math.max(maxT - minT, 86400000);
         w = Math.max(900, Math.ceil(((maxT - minT) / 86400000) * 6));
         var hdr = _buildAdaptiveGanttHeader(minT, maxT, w);
@@ -2535,10 +2533,9 @@ function _reRenderCombinedGantt(target) {
     var demandGroups = window._combinedDemandGroups || {};
     if (!unified) return;
 
-    var minT = new Date(unified.minT.getTime() - 86400000 * 17);
-    var maxT = new Date(unified.maxT.getTime() + 86400000 * 10);
-    var minCap = new Date(maxT.getTime() - 365 * 86400000);
-    if (minT < minCap) minT = minCap;
+    // minT/maxT already padded by _buildGlobalTimeRange, use directly
+    var minT = new Date(unified.minT.getTime());
+    var maxT = new Date(unified.maxT.getTime());
     var span = Math.max(maxT - minT, 3600000);
     var baseW = Math.max(target.clientWidth - 24 - (_peLeftColWidth || 260) - 10, 700);
     window._cgBaseW = baseW;
@@ -2808,7 +2805,9 @@ function _reRenderCombinedGantt(target) {
 
 function _computeUnifiedTimeRange(resRows, demGroups) {
     var minT = null, maxT = null;
-    function _scan(d) { if (d && !isNaN(d)) { if (!minT || d < minT) minT = d; if (!maxT || d > maxT) maxT = d; } }
+    // Ignore dates before 2020-01-01 (closed/historical data may have 1971 dates)
+    var _minValid = new Date(2020, 0, 1);
+    function _scan(d) { if (d && !isNaN(d) && d >= _minValid) { if (!minT || d < minT) minT = d; if (!maxT || d > maxT) maxT = d; } }
 
     // Scan resource rows
     (resRows || []).forEach(function(r) {
@@ -2861,8 +2860,8 @@ function _buildGlobalTimeRange(resRows, demGroups, demandGroups) {
         });
     });
     if (range) {
-        range.minT = new Date(range.minT.getTime() - 86400000 * 17);
-        range.maxT = new Date(range.maxT.getTime() + 86400000 * 14);
+        range.minT = new Date(range.minT.getTime() - 86400000 * 3);
+        range.maxT = new Date(range.maxT.getTime() + 86400000 * 3);
         var minCap = new Date(range.maxT.getTime() - 365 * 86400000);
         if (range.minT < minCap) range.minT = minCap;
     }
