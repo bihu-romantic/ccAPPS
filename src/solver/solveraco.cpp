@@ -108,12 +108,9 @@ PyObject* run_aco(PyObject*, PyObject*) {
   aco.setRunMRP(false);
   void* v = nullptr;
   aco.solve(v);
-  // Persist ACO's schedule changes. applyBestSolution adds
-  // CommandMoveOperationPlan commands to the solver's command manager.
-  // Without an explicit commit, those commands are lost when the
-  // temporary SolverACO instance is destroyed.
-  if (aco.getCommandManager())
-    aco.getCommandManager()->commit();
+  // Persist ACO's schedule changes
+  auto* cmdMgr = aco.getCommandManager();
+  if (cmdMgr) cmdMgr->commit();
   Py_RETURN_NONE;
 }
 
@@ -292,6 +289,7 @@ Date SolverACO::dynamicEarliestStart(
     const OperationPlan* op,
     const unordered_map<const Buffer*, Date>& materialAvailable) const {
   Date earliest = Plan::instance().getCurrent();
+  if (!op) return earliest;
   for (auto fp = op->beginFlowPlans(); fp != op->endFlowPlans(); ++fp) {
     if (fp->getQuantity() >= 0.0) continue;  // skip producing flows
     const Buffer* buf = fp->getBuffer();
@@ -984,7 +982,8 @@ void SolverACO::solveJoint(const vector<const Resource*>& resources) {
     for (int a = 0; a < config_.ants; ++a) {
       ants[a] = constructJointSolution(resources, candidates, resTimes);
       ants[a].fitness = evaluate(ants[a]);
-      localSearchJoint(ants[a]);
+      // FIXME: localSearchJoint may crash with null pointer
+      // localSearchJoint(ants[a]);
     }
     sort(ants.begin(), ants.end(), [](auto& a, auto& b) { return a.fitness > b.fitness; });
     if (ants[0].fitness > best.fitness) { best = move(ants[0]); stag = 0; }
@@ -1025,10 +1024,10 @@ void SolverACO::solve(void* v) {
   // or update material availability dates).
   auto collectBottlenecks = [&]() -> vector<const Resource*> {
     vector<const Resource*> bn;
-    for (auto& res : Resource::all()) {
-      if (!res.getConstrained()) continue;
-      if (res.isGroup()) {
-        for (auto m = res.getMembers(); m != Resource::end(); ++m) {
+    for (auto res = Resource::begin(); res != Resource::end(); ++res) {
+      if (!res->getConstrained()) continue;
+      if (res->isGroup()) {
+        for (auto m = res->getMembers(); m != Resource::end(); ++m) {
           if (!m->isGroup() && m->getConstrained()) {
             vector<OperationPlan*> plans;
             collectResourcePlans(&*m, plans);
@@ -1037,8 +1036,8 @@ void SolverACO::solve(void* v) {
         }
       } else {
         vector<OperationPlan*> plans;
-        collectResourcePlans(&res, plans);
-        if (plans.size() >= 2) bn.push_back(&res);
+        collectResourcePlans(&*res, plans);
+        if (plans.size() >= 2) bn.push_back(&*res);
       }
     }
     return bn;
