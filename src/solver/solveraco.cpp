@@ -185,22 +185,28 @@ double SolverACO::heuristic(const OperationPlan* from,
                             const OperationPlan* to) const {
   if (!to) return 0.0;
   double h = 1.0;
-  // Factor 2: Setup time
+  // Factor 2: Setup time — prefer less setup
   if (from) {
     Duration setup = computeSetupTime(from, to);
     if (setup > Duration(0L))
       h *= 1.0 / (1.0 + static_cast<double>(setup.getSeconds()) / 3600.0);
   }
-  // Factor: Priority
-  double priority = to->getOperation()->getPriority();
-  if (priority > 0.0) h *= (1.0 + priority * 0.1);
-  // Factor 3: Due date urgency
+  // Factor: Demand priority — prefer higher-priority orders
   Demand* dmd = to->getTopOwner()->getDemand();
+  if (dmd) {
+    int dmdPrio = dmd->getPriority();
+    h *= 1.0 + config_.weight_priority / (1.0 + static_cast<double>(dmdPrio));
+  } else {
+    // Fallback: operation-level priority
+    double prio = to->getOperation()->getPriority();
+    if (prio > 0.0) h *= (1.0 + prio * 0.1);
+  }
+  // Factor 3: Due date urgency — prefer more urgent
   if (dmd && dmd->getDue() != Date::infiniteFuture) {
     auto urgency = static_cast<double>(
         (dmd->getDue() - Plan::instance().getCurrent()).getSeconds()) / 86400.0;
     if (urgency > 0.0)
-      h *= max(1.0, 10.0 / (1.0 + urgency));  // boosted urgency weight
+      h *= max(1.0, 10.0 / (1.0 + urgency));
     else
       h *= 100.0;  // already overdue → very high priority
   }
@@ -304,7 +310,8 @@ bool SolverACO::isUpstreamBlocked(
 vector<CandidateOp> SolverACO::buildCandidates(
     const vector<const Resource*>& resources) const {
   vector<CandidateOp> candidates;
-  unordered_set<OperationPlan*> seen;
+  unordered_set<OperationPlan*> processed;
+  int nextId = 0;
 
   for (auto* res : resources) {
     auto loadplans = res->getLoadPlans();
@@ -316,14 +323,57 @@ vector<CandidateOp> SolverACO::buildCandidates(
                                        OperationItemDistribution>())
         continue;
 
-      if (seen.count(op)) continue;
-      seen.insert(op);
+      if (processed.count(op)) continue;
+      processed.insert(op);
 
-      CandidateOp c;
-      c.op = op;
-      c.res = res;
-      c.earliestStart = earliestStart(op, res);
-      candidates.push_back(c);
+      // Collect all constrained resources this operation could run on.
+      // Expand resource groups into individual child resources so ACO can
+      // choose the best machine within a pool.
+      unordered_set<const Resource*> altResources;
+      for (const auto& ld : op->getOperation()->getLoads()) {
+        const Resource* ldRes = ld.getResource();
+        if (!ldRes || !ldRes->getConstrained()) continue;
+
+        if (ldRes->isGroup()) {
+          // Expand resource group up to 3 levels to find individual machines
+          for (auto m1 = ldRes->getMembers(); m1 != Resource::end(); ++m1) {
+            if (m1->isGroup()) {
+              for (auto m2 = m1->getMembers(); m2 != Resource::end(); ++m2) {
+                if (m2->isGroup()) {
+                  for (auto m3 = m2->getMembers(); m3 != Resource::end(); ++m3)
+                    altResources.insert(&*m3);
+                } else {
+                  altResources.insert(&*m2);
+                }
+              }
+            } else {
+              altResources.insert(&*m1);
+            }
+          }
+        } else {
+          altResources.insert(ldRes);
+        }
+      }
+
+      // Generate one candidate per feasible resource
+      for (auto* altRes : altResources) {
+        CandidateOp c;
+        c.op = op;
+        c.res = altRes;
+        c.earliestStart = earliestStart(op, altRes);
+        c.candId = nextId;
+        candidates.push_back(c);
+      }
+      // Fallback: if no constrained resource found, keep MRP assignment
+      if (altResources.empty()) {
+        CandidateOp c;
+        c.op = op;
+        c.res = res;
+        c.earliestStart = earliestStart(op, res);
+        c.candId = nextId;
+        candidates.push_back(c);
+      }
+      ++nextId;
     }
   }
   return candidates;
@@ -473,6 +523,20 @@ AntSolution SolverACO::constructJointSolution(
 
       pool.erase(pool.begin() + sel);
       remaining--;
+      // Mutual exclusion: remove candidates of the same operation from
+      // all other resource pools — each operation is scheduled only once.
+      for (auto* otherRes : resources) {
+        if (otherRes == res) continue;
+        auto& otherPool = byRes[otherRes];
+        for (size_t k = 0; k < otherPool.size(); ) {
+          if (otherPool[k].candId == chosen.candId) {
+            otherPool.erase(otherPool.begin() + k);
+            remaining--;
+          } else {
+            ++k;
+          }
+        }
+      }
       prevOp[res] = chosen.op;
       curTime[res] = end;
       progress = true;
@@ -596,18 +660,30 @@ double SolverACO::evaluate(const AntSolution& sol) {
     for (size_t i = 0; i < seq.size(); ++i) {
       const OperationPlan* op = seq[i];
 
+      // Compute priority factor: lower priority number = higher importance.
+      // dmdPrio=0 → factor≈11x, dmdPrio=999 → factor≈1.0x
+      Demand* dmd = op->getTopOwner()->getDemand();
+      int dmdPrio = dmd ? dmd->getPriority() : 999;
+      double priorityFactor = 1.0
+          + config_.weight_priority / (1.0 + static_cast<double>(dmdPrio));
+
       // Factor 5: Material penalty if starting before material is available
       Date matAvail = earliestStart(op, res);
       if (starts[i] < matAvail)
-        tardiness += MATERIAL_PENALTY;
+        tardiness += MATERIAL_PENALTY * priorityFactor;
 
-      // Factor 3: Due date tardiness
-      Demand* dmd = op->getTopOwner()->getDemand();
+      // Factor 3: Due date tardiness (priority-weighted)
       if (dmd && dmd->getDue() != Date::infiniteFuture && ends[i] > dmd->getDue())
         tardiness += static_cast<double>(
-            (ends[i] - dmd->getDue()).getSeconds()) / 3600.0;
+            (ends[i] - dmd->getDue()).getSeconds()) / 3600.0 * priorityFactor;
 
+      // Factor: Operation cost (operation base + resource hourly)
       cost += op->getOperation()->getCost() * op->getQuantity();
+      // Add resource usage cost per hour for the actual scheduled duration
+      Duration dur = ends[i] - starts[i];
+      if (dur > Duration(0L))
+        cost += res->getCost() *
+            static_cast<double>(dur.getSeconds()) / 3600.0;
 
       // Factor 2: Setup time
       if (prev)
@@ -618,9 +694,22 @@ double SolverACO::evaluate(const AntSolution& sol) {
     }
   }
 
+  // Factor: Load balancing — penalize uneven resource utilization.
+  // Sum of squared load-hours per resource: 5+5 → 25+25=50, 10+0 → 100+0=100
+  double loadBalance = 0.0;
+  for (const auto& kv : sol.sequences) {
+    double resLoad = 0.0;
+    const auto& ss = sol.startDates.at(kv.first);
+    const auto& es = sol.endDates.at(kv.first);
+    for (size_t i = 0; i < kv.second.size(); ++i)
+      resLoad += static_cast<double>((es[i] - ss[i]).getSeconds()) / 3600.0;
+    loadBalance += resLoad * resLoad;
+  }
+
   return -(config_.weight_tardiness * tardiness +
            config_.weight_cost * cost +
-           config_.weight_setup * setup);
+           config_.weight_setup * setup +
+           config_.weight_balance * loadBalance);
 }
 
 // ==========================================================================
@@ -643,15 +732,48 @@ const PheromoneMatrix* SolverACO::getPheromone(const Resource* res) const {
 void SolverACO::applyBestSolution(const AntSolution& best) {
   auto* cmdMgr = getCommandManager();
   for (const auto& kv : best.sequences) {
+    const Resource* seqRes = kv.first;
     const auto& seq = kv.second;
-    const auto& starts = best.startDates.at(kv.first);
-    const auto& ends = best.endDates.at(kv.first);
+    const auto& starts = best.startDates.at(seqRes);
+    const auto& ends = best.endDates.at(seqRes);
+    const auto& assigned = best.assignedResources.count(seqRes)
+        ? best.assignedResources.at(seqRes)
+        : vector<const Resource*>();
+
     for (size_t i = 0; i < seq.size(); ++i) {
       if (starts[i] != Date::infiniteFuture && ends[i] != Date::infiniteFuture) {
+        OperationPlan* op = seq[i];
+
+        // If ACO chose a different resource than MRP, apply the change
+        if (i < assigned.size() && assigned[i] &&
+            assigned[i] != seqRes) {
+          // Find the first start loadplan and switch to the chosen resource.
+          // Look for the Load on the operation that owns the target resource.
+          for (auto lp = op->beginLoadPlans(); lp != op->endLoadPlans(); ++lp) {
+            if (!lp->isStart()) continue;
+            // Find which Load on the operation owns the target resource
+            const Load* targetLoad = nullptr;
+            for (const auto& ld : op->getOperation()->getLoads()) {
+              // Match by top-level resource (for grouped resources) or directly
+              if (ld.getResource() == assigned[i] ||
+                  (ld.getResource()->isGroup() &&
+                   assigned[i]->getTop() == ld.getResource())) {
+                targetLoad = &ld;
+                break;
+              }
+            }
+            if (targetLoad)
+              lp->setLoad(const_cast<Load*>(targetLoad));
+            else
+              lp->setResource(const_cast<Resource*>(assigned[i]), false, false);
+            break;
+          }
+        }
+
         if (cmdMgr)
-          cmdMgr->add(new CommandMoveOperationPlan(seq[i], starts[i], ends[i]));
+          cmdMgr->add(new CommandMoveOperationPlan(op, starts[i], ends[i]));
         else
-          seq[i]->setStart(starts[i], false, false);
+          op->setStart(starts[i], false, false);
       }
     }
   }
@@ -780,9 +902,21 @@ void SolverACO::solve(void* v) {
   vector<const Resource*> bottleneck;
   for (auto& res : Resource::all()) {
     if (!res.getConstrained()) continue;
-    vector<OperationPlan*> plans;
-    collectResourcePlans(&res, plans);
-    if (plans.size() >= 2) bottleneck.push_back(&res);
+
+    if (res.isGroup()) {
+      // Expand resource group: add individual constrained child resources
+      for (auto m = res.getMembers(); m != Resource::end(); ++m) {
+        if (!m->isGroup() && m->getConstrained()) {
+          vector<OperationPlan*> plans;
+          collectResourcePlans(&*m, plans);
+          if (plans.size() >= 2) bottleneck.push_back(&*m);
+        }
+      }
+    } else {
+      vector<OperationPlan*> plans;
+      collectResourcePlans(&res, plans);
+      if (plans.size() >= 2) bottleneck.push_back(&res);
+    }
   }
 
   if (bottleneck.size() >= 2 && config_.joint_optimization)

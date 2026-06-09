@@ -49,6 +49,8 @@ struct ACOConfig {
   double weight_tardiness = 1.0;
   double weight_cost = 0.5;
   double weight_setup = 0.3;
+  double weight_priority = 10.0;
+  double weight_balance = 0.1;
   int elite_ants = 3;
   bool runMRP = true;
   bool joint_optimization = true;
@@ -61,6 +63,7 @@ struct CandidateOp {
   OperationPlan* op;
   const Resource* res;
   Date earliestStart;  // constrained by material availability + upstream deps
+  int candId = 0;      // shared by candidates of the same operation plan
 };
 
 /* A single ant's solution for resource scheduling. */
