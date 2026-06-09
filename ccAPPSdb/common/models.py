@@ -478,7 +478,7 @@ class User(AbstractUser):
     horizonend = models.DateTimeField(blank=True, null=True)
     horizontype = models.BooleanField(blank=True, default=True)
     horizonlength = models.IntegerField(blank=True, default=6, null=True)
-    horizonbefore = models.IntegerField(blank=True, default=0, null=True)
+    horizonbefore = models.IntegerField(blank=True, default=1, null=True)
     horizonunit = models.CharField(
         blank=True,
         default="month",
