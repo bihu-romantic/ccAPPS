@@ -2494,7 +2494,7 @@ function zoomCombinedGantt(factor) {
     var oldZoom = window._cgZoom || 1.0;
     var newZoom = oldZoom * factor;
     if (newZoom < 0.2) newZoom = 0.2;
-    if (newZoom > 15) newZoom = 15;
+    if (newZoom > 50) newZoom = 50;
     window._cgZoom = newZoom;
     try { sessionStorage.setItem("peGanttZoom", newZoom); } catch(e) {}
 
