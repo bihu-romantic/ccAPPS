@@ -107,9 +107,9 @@
 
 /* Resource gantt header */
 .pe-gantt-header-track { position: relative; height: 46px; border-top: 1px solid #bfc5cc; border-bottom: 1px solid #bfc5cc; background: #e9ecef; overflow: hidden; }
-.pe-gantt-tick { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(0,0,0,0.06); z-index: 1; }
-.pe-gantt-month-split { position: absolute; top: 0; bottom: 0; width: 2px; background: rgba(0,0,0,0.10); z-index: 1; }
-.pe-gantt-header-track .pe-gantt-tick { top: auto; bottom: 0; height: 6px; }
+.pe-gantt-tick { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(0,0,0,0.10); z-index: 1; }
+.pe-gantt-month-split { position: absolute; top: 0; bottom: 0; width: 2px; background: rgba(0,0,0,0.16); z-index: 1; }
+.pe-gantt-header-track .pe-gantt-tick { top: auto; bottom: 0; height: 12px; }
 .pe-gantt-header-track .pe-gantt-month-split { top: 0; bottom: 0; }
 .pe-gantt-month-block { position: absolute; top: 0; height: 24px; display: flex; align-items: center; justify-content:center; font-size: 12px; font-weight: 600; color: #374151; overflow: hidden; white-space: nowrap; }
 .pe-gantt-month-block.mb-0 { background: #cfd6dc; }
@@ -412,8 +412,30 @@ function _buildAdaptiveGanttHeader(minT, maxT, w) {
             }
             bs = be;
         }
+    } else if (scaling < 150) {
+        // L6: Daily + 3-Hourly
+        bs = new Date(minT.getTime()); bs.setMinutes(0,0,0); bs.setHours(Math.floor(bs.getHours()/3)*3);
+        ui = 0; li = 0;
+        while (bs <= maxT) {
+            x1 = Math.max(0, (bs - minT) / span * w);
+            be = new Date(bs); be.setHours(be.getHours() + 3);
+            x2 = Math.min(w, (be - minT) / span * w);
+            if (x2 > x1) {
+                isMajor = bs.getHours() === 0;
+                gridPositions.push({ x: x1, isMonthBoundary: isMajor });
+                lowerBlocks.push({ x: x1, w: x2 - x1, label: String(bs.getHours()), altIdx: li % 2 });
+                if (isMajor) {
+                    var de = new Date(bs); de.setDate(de.getDate() + 1); de.setHours(0);
+                    var dx2 = Math.min(w, (de - minT) / span * w);
+                    upperBlocks.push({ x: x1, w: dx2 - x1, label: _fmtDateFull(bs), altIdx: ui % 2 });
+                    ui++;
+                }
+                li++;
+            }
+            bs = be;
+        }
     } else {
-        // L6: Daily + Hourly
+        // L7: Daily + Hourly
         bs = new Date(minT.getTime()); bs.setMinutes(0,0,0);
         ui = 0; li = 0;
         while (bs <= maxT) {
@@ -425,9 +447,9 @@ function _buildAdaptiveGanttHeader(minT, maxT, w) {
                 gridPositions.push({ x: x1, isMonthBoundary: isMajor });
                 lowerBlocks.push({ x: x1, w: x2 - x1, label: String(bs.getHours()), altIdx: li % 2 });
                 if (isMajor) {
-                    var de = new Date(bs); de.setDate(de.getDate() + 1); de.setHours(0);
-                    var dx2 = Math.min(w, (de - minT) / span * w);
-                    upperBlocks.push({ x: x1, w: dx2 - x1, label: _fmtDateFull(bs), altIdx: ui % 2 });
+                    var de2 = new Date(bs); de2.setDate(de2.getDate() + 1); de2.setHours(0);
+                    var dx3 = Math.min(w, (de2 - minT) / span * w);
+                    upperBlocks.push({ x: x1, w: dx3 - x1, label: _fmtDateFull(bs), altIdx: ui % 2 });
                     ui++;
                 }
                 li++;
