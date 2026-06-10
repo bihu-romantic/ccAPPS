@@ -42,7 +42,7 @@ translations_extract() {
   do
     ## Build a compendium with known translations
     msgcat --use-first $django/conf/locale/$language/LC_MESSAGES/django.po \
-      $django/contrib/admin/locale/$language/LC_MESSAGES/django.po \
+      $django/contrib/admisoln/locale/$language/LC_MESSAGES/django.po \
       $django/contrib/admin/locale/$language/LC_MESSAGES/djangojs.po \
       $django/contrib/admindocs/locale/$language/LC_MESSAGES/django.po \
       $django/contrib/auth/locale/$language/LC_MESSAGES/django.po \
