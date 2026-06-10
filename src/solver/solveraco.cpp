@@ -885,8 +885,20 @@ void SolverACO::localSearchJoint(AntSolution& sol) {
           cand.sequences[res] = move(cseq);
           cand.startDates[res] = move(cs);
           cand.endDates[res] = move(ce);
-          cand.fitness = evaluate(cand);
-          if (cand.fitness > sol.fitness) { sol = move(cand); improved = true; goto restart; }
+          // Evaluate with safety: skip if solution is inconsistent
+          bool valid = true;
+          for (auto& skv : cand.sequences) {
+            auto sit = cand.startDates.find(skv.first);
+            auto eit = cand.endDates.find(skv.first);
+            if (sit == cand.startDates.end() || eit == cand.endDates.end()
+                || skv.second.size() != sit->second.size()) {
+              valid = false; break;
+            }
+          }
+          if (valid) {
+            cand.fitness = evaluate(cand);
+            if (cand.fitness > sol.fitness) { sol = move(cand); improved = true; goto restart; }
+          }
         }
       }
       restart:;
@@ -1127,7 +1139,7 @@ void SolverACO::solveJoint(const vector<const Resource*>& resources) {
       ants[a] = constructJointSolution(resources, candidates, resTimes);
       compactSchedule(ants[a], resources, resTimes);
       ants[a].fitness = evaluate(ants[a]);
-      // FIXME: localSearchJoint may crash with null pointer
+      // FIXME: localSearchJoint crash — under investigation
       // localSearchJoint(ants[a]);
     }
     sort(ants.begin(), ants.end(), [](auto& a, auto& b) { return a.fitness > b.fitness; });
