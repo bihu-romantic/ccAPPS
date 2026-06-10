@@ -677,7 +677,10 @@ function _reRenderCombinedGantt(target) {
     var span = Math.max(maxT - minT, 3600000);
     var baseW = Math.max(target.clientWidth - 24 - (_peLeftColWidth || 260) - 10, 700);
     window._cgBaseW = baseW;
-    if (!window._cgZoom) window._cgZoom = 1.0;
+    if (!window._cgZoom) {
+        try { var savedZoom = sessionStorage.getItem("peGanttZoom"); if (savedZoom) window._cgZoom = parseFloat(savedZoom); } catch(e) {}
+        if (!window._cgZoom) window._cgZoom = 1.0;
+    }
     var w = baseW * window._cgZoom;
     var hdr = _buildGanttHeader(minT, maxT, w);
     var weekPositions = hdr.weekPositions;
@@ -841,6 +844,7 @@ function zoomCombinedGantt(factor) {
     if (newZoom < 0.2) newZoom = 0.2;
     if (newZoom > 15) newZoom = 15;
     window._cgZoom = newZoom;
+    try { sessionStorage.setItem("peGanttZoom", newZoom); } catch(e) {}
     var timeCol = document.getElementById("cg-time-col");
     var centerDate = null;
     if (timeCol && window._combinedUnified) {
