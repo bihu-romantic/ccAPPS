@@ -50,6 +50,8 @@
 }
 .pe-widget-stack { display: flex; flex-direction: column; gap: 10px; }
 .pe-widget-card { border: 1px solid #dee2e6; border-radius: 6px; overflow: hidden; background: #fff; }
+.pe-widget-card.pe-widget-card-dropdown-host { overflow: visible; }
+.pe-widget-card.pe-widget-card-dropdown-host .pe-widget-body { overflow: visible; }
 .pe-widget-header { background: #fff3e0; color: #333333; font-size: 13px; font-weight: 400; padding: 7px 12px; border-bottom: 1px solid #ffd8a8; }
 .pe-widget-body { padding: 8px 10px 10px 10px; }
 .pe-widget-card.pe-no-selection { min-height: 64px; }
@@ -386,7 +388,7 @@ function _buildAdaptiveGanttHeader(minT, maxT, w) {
             }
             bs = be;
         }
-    } else if (scaling < 350) {
+    } else if (scaling < 60) {
         // L5: Weekly + Daily (long: Ddd DD Mon)
         bs = new Date(minT.getTime());
         ui = 0; li = 0;
@@ -3461,7 +3463,7 @@ function _renderOperationplanDetailPanels(opplan) {
     gridHtml += '<div class="pe-attrs-grid-left">' + _renderOneWidget(typeLabel(tp), moTable + editHtml.join(""), "pe-mo-widget", "pe-mo-widget") + '</div>';
     gridHtml += '<div class="pe-attrs-grid-right">';
     gridHtml += _renderOneWidget("{% trans 'Problems' %}", problemsHtml, "", "pe-attrs-problems-card");
-    gridHtml += _renderOneWidget("资源", resourceWidgetHtml);
+    gridHtml += _renderOneWidget("资源", resourceWidgetHtml, "pe-widget-card-dropdown-host");
     gridHtml += _renderOneWidget("物料",
         _renderArrayTable(["物料", "数量", "现有库存", "日期"], materialRows, "无物料移动"));
     gridHtml += _renderOneWidget("需求",
