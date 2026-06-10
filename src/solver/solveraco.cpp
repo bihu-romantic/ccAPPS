@@ -751,6 +751,103 @@ void SolverACO::localSearch(const Resource*, AntSolution& sol) {
 }
 
 // ==========================================================================
+// Schedule compaction: left-shift operations to fill idle gaps
+// After constructive scheduling, resources may have idle periods because
+// an operation was delayed waiting for another resource. This pass replays
+// operations in start-time order, recalculating the earliest feasible
+// start on all required resources simultaneously.
+// ==========================================================================
+
+void SolverACO::compactSchedule(
+    AntSolution& ant,
+    const vector<const Resource*>& resources,
+    const unordered_map<const Resource*, Date>& resourceTimes) {
+  // Collect all ops with their resources and current times
+  struct OpEntry {
+    OperationPlan* op;
+    vector<const Resource*> resList;
+    Date start, end;
+  };
+  vector<OpEntry> allOps;
+
+  // Gather unique operations from all resources, deduplicate by pointer
+  unordered_set<OperationPlan*> seen;
+  for (auto* r : resources) {
+    auto& seq = ant.sequences[r];
+    auto& starts = ant.startDates[r];
+    auto& ends = ant.endDates[r];
+    for (size_t i = 0; i < seq.size(); ++i) {
+      if (seen.count(seq[i])) continue;
+      seen.insert(seq[i]);
+      OpEntry e;
+      e.op = seq[i];
+      e.resList = getConstrainedResources(seq[i]);
+      if (e.resList.empty()) e.resList.push_back(r);
+      e.start = starts[i];
+      e.end = ends[i];
+      allOps.push_back(e);
+    }
+  }
+
+  if (allOps.empty()) return;
+
+  // Sort by current start time
+  sort(allOps.begin(), allOps.end(),
+       [](const OpEntry& a, const OpEntry& b) { return a.start < b.start; });
+
+  // Reset resource clocks and per-resource sequences
+  unordered_map<const Resource*, Date> curTime;
+  unordered_map<const Resource*, const OperationPlan*> prevOp;
+  unordered_map<const Resource*, vector<OperationPlan*>> newSeq;
+  unordered_map<const Resource*, vector<Date>> newStarts, newEnds;
+
+  for (auto* r : resources) {
+    auto it = resourceTimes.find(r);
+    curTime[r] = (it != resourceTimes.end()) ? it->second
+                  : Plan::instance().getCurrent();
+    prevOp[r] = nullptr;
+  }
+
+  // Replay operations in current order, but compacted
+  for (auto& e : allOps) {
+    // Compute earliest feasible start across all required resources
+    Date rawStart = earliestStart(e.op, e.resList[0]);
+    for (auto* r : e.resList) {
+      Duration setup = computeSetupTime(prevOp[r], e.op);
+      rawStart = max(rawStart, curTime[r] + setup);
+    }
+
+    Duration dur = estimateOperationDuration(e.op, e.resList[0]);
+    Date start, end;
+    if (e.op->getOperation()) {
+      DateRange range = e.op->getOperation()->calculateOperationTime(
+          e.op, rawStart, dur, true);
+      start = range.getStart();
+      end = range.getEnd();
+    } else {
+      start = rawStart;
+      end = rawStart + dur;
+    }
+
+    // Commit to all resources
+    for (auto* r : e.resList) {
+      newSeq[r].push_back(e.op);
+      newStarts[r].push_back(start);
+      newEnds[r].push_back(end);
+      prevOp[r] = e.op;
+      curTime[r] = end;
+    }
+  }
+
+  // Replace ant's sequences with compacted versions
+  for (auto* r : resources) {
+    ant.sequences[r] = move(newSeq[r]);
+    ant.startDates[r] = move(newStarts[r]);
+    ant.endDates[r] = move(newEnds[r]);
+  }
+}
+
+// ==========================================================================
 // Joint local search
 // ==========================================================================
 
@@ -1028,6 +1125,7 @@ void SolverACO::solveJoint(const vector<const Resource*>& resources) {
     vector<AntSolution> ants(config_.ants);
     for (int a = 0; a < config_.ants; ++a) {
       ants[a] = constructJointSolution(resources, candidates, resTimes);
+      compactSchedule(ants[a], resources, resTimes);
       ants[a].fitness = evaluate(ants[a]);
       // FIXME: localSearchJoint may crash with null pointer
       // localSearchJoint(ants[a]);

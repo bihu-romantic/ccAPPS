@@ -168,6 +168,9 @@ class SolverACO : public SolverCreate {
       const vector<CandidateOp>& allCandidates,
       const unordered_map<const Resource*, Date>& resourceTimes);
   void localSearchJoint(AntSolution& solution);
+  void compactSchedule(AntSolution& ant,
+      const vector<const Resource*>& resources,
+      const unordered_map<const Resource*, Date>& resourceTimes);
   double evaluateJoint(
       const AntSolution& solution,
       const unordered_map<const Resource*, Date>& resourceTimes);
