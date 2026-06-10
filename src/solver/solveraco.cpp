@@ -852,6 +852,15 @@ void SolverACO::compactSchedule(
 // ==========================================================================
 
 void SolverACO::localSearchJoint(AntSolution& sol) {
+  // Build resource list from sol.sequences keys
+  vector<const Resource*> resources;
+  unordered_map<const Resource*, Date> resTimes;
+  for (auto& kv : sol.sequences) {
+    resources.push_back(kv.first);
+    resTimes[kv.first] = Plan::instance().getCurrent();
+  }
+  if (resources.empty()) return;
+
   bool improved = true;
   while (improved) {
     improved = false;
@@ -861,43 +870,16 @@ void SolverACO::localSearchJoint(AntSolution& sol) {
       if (seq.size() < 2) continue;
       for (size_t i = 0; i < seq.size() - 1; ++i) {
         for (size_t j = i + 1; j < seq.size(); ++j) {
-          auto cseq = seq; swap(cseq[i], cseq[j]);
-          vector<Date> cs, ce;
-          Date ct = Plan::instance().getCurrent();
-          const OperationPlan* prev = nullptr;
-          for (auto* op : cseq) {
-            Date rawStart = max(ct + computeSetupTime(prev, op), earliestStart(op, res));
-            Duration dur = estimateOperationDuration(op, res);
-            Date start, end;
-            if (op->getOperation()) {
-              DateRange range = op->getOperation()->calculateOperationTime(
-                  op, rawStart, dur, true);
-              start = range.getStart();
-              end = range.getEnd();
-            } else {
-              start = rawStart;
-              end = rawStart + dur;
-            }
-            cs.push_back(start); ce.push_back(end);
-            prev = op; ct = end;
-          }
           AntSolution cand = sol;
-          cand.sequences[res] = move(cseq);
-          cand.startDates[res] = move(cs);
-          cand.endDates[res] = move(ce);
-          // Evaluate with safety: skip if solution is inconsistent
-          bool valid = true;
-          for (auto& skv : cand.sequences) {
-            auto sit = cand.startDates.find(skv.first);
-            auto eit = cand.endDates.find(skv.first);
-            if (sit == cand.startDates.end() || eit == cand.endDates.end()
-                || skv.second.size() != sit->second.size()) {
-              valid = false; break;
-            }
-          }
-          if (valid) {
-            cand.fitness = evaluate(cand);
-            if (cand.fitness > sol.fitness) { sol = move(cand); improved = true; goto restart; }
+          auto& cseq = cand.sequences[res];
+          swap(cseq[i], cseq[j]);
+          // After swap, run compaction to rebuild all resource timelines
+          compactSchedule(cand, resources, resTimes);
+          cand.fitness = evaluate(cand);
+          if (cand.fitness > sol.fitness) {
+            sol = move(cand);
+            improved = true;
+            goto restart;
           }
         }
       }
@@ -1139,8 +1121,7 @@ void SolverACO::solveJoint(const vector<const Resource*>& resources) {
       ants[a] = constructJointSolution(resources, candidates, resTimes);
       compactSchedule(ants[a], resources, resTimes);
       ants[a].fitness = evaluate(ants[a]);
-      // FIXME: localSearchJoint crash — under investigation
-      // localSearchJoint(ants[a]);
+      localSearchJoint(ants[a]);
     }
     sort(ants.begin(), ants.end(), [](auto& a, auto& b) { return a.fitness > b.fitness; });
     if (ants[0].fitness > best.fitness) { best = move(ants[0]); stag = 0; }
