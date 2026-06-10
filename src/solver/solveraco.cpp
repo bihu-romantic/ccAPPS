@@ -375,6 +375,28 @@ Duration SolverACO::computeUpstreamWait(
 }
 
 // ==========================================================================
+// Helper: get all constrained resources an operation needs
+// ==========================================================================
+
+vector<const Resource*> SolverACO::getConstrainedResources(
+    const OperationPlan* op) const {
+  vector<const Resource*> result;
+  if (!op || !op->getOperation()) return result;
+  for (const auto& ld : op->getOperation()->getLoads()) {
+    const Resource* ldRes = ld.getResource();
+    if (!ldRes || !ldRes->getConstrained()) continue;
+    if (ldRes->isGroup()) {
+      for (auto m = ldRes->getMembers(); m != Resource::end(); ++m)
+        if (!m->isGroup() && m->getConstrained())
+          result.push_back(&*m);
+    } else {
+      result.push_back(ldRes);
+    }
+  }
+  return result;
+}
+
+// ==========================================================================
 // Factor 1: Build candidates from manufacturing orders
 // Each MO with ≥1 resource load generates candidates
 // ==========================================================================
@@ -427,20 +449,30 @@ vector<CandidateOp> SolverACO::buildCandidates(
         }
       }
 
-      // Generate one candidate per feasible resource
-      for (auto* altRes : altResources) {
+      // Generate ONE candidate covering ALL constrained resources.
+      // Operations needing multiple resources (e.g. operator + machine)
+      // must occupy all of them simultaneously.
+      if (!altResources.empty()) {
         CandidateOp c;
         c.op = op;
-        c.res = altRes;
-        c.earliestStart = earliestStart(op, altRes);
+        c.allResources = vector<const Resource*>(
+            altResources.begin(), altResources.end());
+        c.res = c.allResources[0];  // primary resource
+        // Earliest start = max of material constraints across all resources
+        Date eStart = Plan::instance().getCurrent();
+        for (auto* r : c.allResources) {
+          Date rStart = earliestStart(op, r);
+          if (rStart > eStart) eStart = rStart;
+        }
+        c.earliestStart = eStart;
         c.candId = nextId;
         candidates.push_back(c);
-      }
-      // Fallback: if no constrained resource found, keep MRP assignment
-      if (altResources.empty()) {
+      } else {
+        // Fallback: no constrained resource, keep MRP assignment
         CandidateOp c;
         c.op = op;
         c.res = res;
+        c.allResources.push_back(res);
         c.earliestStart = earliestStart(op, res);
         c.candId = nextId;
         candidates.push_back(c);
@@ -536,10 +568,13 @@ AntSolution SolverACO::constructJointSolution(
   AntSolution ant;
   if (allCandidates.empty()) return ant;
 
-  // Group candidates by resource, mark unvisited
+  // Group candidates by ALL required resources.
+  // Multi-resource operations appear in each resource's pool so they
+  // can be selected when any of their resources gets a turn.
   unordered_map<const Resource*, vector<CandidateOp>> byRes;
   for (auto& c : allCandidates)
-    byRes[c.res].push_back(c);
+    for (auto* r : c.allResources)
+      byRes[r].push_back(c);
 
   // Per-resource state
   unordered_map<const Resource*, const OperationPlan*> prevOp;
@@ -598,12 +633,15 @@ AntSolution SolverACO::constructJointSolution(
       }
 
       CandidateOp chosen = pool[sel];
-      Duration setup = computeSetupTime(prevOp[res], chosen.op);
-      // Factor 5: Combine static earliestStart with dynamic material clock.
-      // The dynamic clock captures material availability changes caused by
-      // operations already placed by this ant on other resources.
+      // Compute rawStart across ALL required resources — the operation
+      // can only begin when every resource it needs is free.
+      Date rawStart = chosen.earliestStart;
+      for (auto* r : chosen.allResources) {
+        Duration setup = computeSetupTime(prevOp[r], chosen.op);
+        rawStart = max(rawStart, curTime[r] + setup);
+      }
       Date matEarliest = dynamicEarliestStart(chosen.op, materialAvailable);
-      Date rawStart = max({curTime[res] + setup, chosen.earliestStart, matEarliest});
+      rawStart = max(rawStart, matEarliest);
       Duration dur = estimateOperationDuration(chosen.op, res);
       // Apply calendar constraints
       Date start, end;
@@ -617,34 +655,36 @@ AntSolution SolverACO::constructJointSolution(
         end = rawStart + dur;
       }
 
-      ant.sequences[res].push_back(chosen.op);
-      ant.startDates[res].push_back(start);
-      ant.endDates[res].push_back(end);
-      ant.assignedResources[res].push_back(chosen.res);
+      // Write to ALL resources this operation occupies
+      for (auto* r : chosen.allResources) {
+        ant.sequences[r].push_back(chosen.op);
+        ant.startDates[r].push_back(start);
+        ant.endDates[r].push_back(end);
+        ant.assignedResources[r].push_back(r);  // each resource keeps its own
+        prevOp[r] = chosen.op;
+        curTime[r] = end;
+      }
 
-      pool.erase(pool.begin() + sel);
-      remaining--;
-      // Mutual exclusion: remove candidates of the same operation from
-      // all other resource pools — each operation is scheduled only once.
-      for (auto* otherRes : resources) {
-        if (otherRes == res) continue;
-        auto& otherPool = byRes[otherRes];
-        for (size_t k = 0; k < otherPool.size(); ) {
-          if (otherPool[k].candId == chosen.candId) {
-            otherPool.erase(otherPool.begin() + k);
-            remaining--;
+      // Remove this operation from ALL resource pools (mutual exclusion).
+      // Multi-resource ops appear in every required resource's pool.
+      int removed = 0;
+      for (auto* r : resources) {
+        auto& rpool = byRes[r];
+        for (size_t k = 0; k < rpool.size(); ) {
+          if (rpool[k].candId == chosen.candId) {
+            rpool.erase(rpool.begin() + k);
+            removed++;
           } else {
             ++k;
           }
         }
       }
-      // Update material availability clock: for each buffer this operation
-      // produces into, record when material becomes available. Downstream
-      // operations on other resources will pick this up via
-      // dynamicEarliestStart().
+      remaining -= removed;
+
+      // Update material availability clock
       for (auto fp = chosen.op->beginFlowPlans();
            fp != chosen.op->endFlowPlans(); ++fp) {
-        if (fp->getQuantity() < 0.0) continue;  // skip consuming flows
+        if (fp->getQuantity() < 0.0) continue;
         const Buffer* buf = fp->getBuffer();
         if (!buf) continue;
         auto it = materialAvailable.find(buf);
@@ -765,6 +805,9 @@ double SolverACO::evaluate(const AntSolution& sol) {
   double tardiness = 0.0, cost = 0.0, setup = 0.0;
   const double MATERIAL_PENALTY = 1000.0;  // heavy penalty for violating material constraint
 
+  // Track seen operations to avoid double-counting multi-resource ops
+  unordered_set<const OperationPlan*> seen;
+
   for (const auto& kv : sol.sequences) {
     const Resource* res = kv.first;
     const auto& seq = kv.second;
@@ -774,6 +817,10 @@ double SolverACO::evaluate(const AntSolution& sol) {
     const OperationPlan* prev = nullptr;
     for (size_t i = 0; i < seq.size(); ++i) {
       const OperationPlan* op = seq[i];
+
+      // Deduplicate: multi-resource ops appear on every resource they occupy
+      if (seen.count(op)) { prev = op; continue; }
+      seen.insert(op);
 
       // Compute priority factor: lower priority number = higher importance.
       // dmdPrio=0 → factor≈11x, dmdPrio=999 → factor≈1.0x

@@ -59,13 +59,15 @@ struct ACOConfig {
 };
 
 /* A candidate operation plan that an ant can select.
- * When an operation has multiple resource options, each combination
- * becomes a separate candidate. */
+ * For operations requiring multiple constrained resources simultaneously,
+ * one candidate covers all required resources so the operation occupies
+ * them all at the same time. */
 struct CandidateOp {
   OperationPlan* op;
-  const Resource* res;
-  Date earliestStart;  // constrained by material availability + upstream deps
-  int candId = 0;      // shared by candidates of the same operation plan
+  const Resource* res;  // primary resource (first in allResources)
+  Date earliestStart;   // constrained by material availability + upstream deps
+  int candId = 0;       // shared by candidates of the same operation plan
+  vector<const Resource*> allResources;  // ALL constrained resources needed
 };
 
 /* A single ant's solution for resource scheduling. */
@@ -173,6 +175,8 @@ class SolverACO : public SolverCreate {
   /* ---- Shared helpers ---- */
   double heuristic(const OperationPlan* from, const OperationPlan* to) const;
   void applyBestSolution(const AntSolution& best);
+  vector<const Resource*> getConstrainedResources(
+      const OperationPlan* op) const;
   bool isUpstreamBlocked(
       const OperationPlan* op,
       const unordered_map<const Resource*, Date>& resourceTimes) const;
