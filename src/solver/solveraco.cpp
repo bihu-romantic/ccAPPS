@@ -386,9 +386,24 @@ vector<const Resource*> SolverACO::getConstrainedResources(
     const Resource* ldRes = ld.getResource();
     if (!ldRes || !ldRes->getConstrained()) continue;
     if (ldRes->isGroup()) {
-      for (auto m = ldRes->getMembers(); m != Resource::end(); ++m)
-        if (!m->isGroup() && m->getConstrained())
-          result.push_back(&*m);
+      Skill* requiredSkill = ld.getSkill();
+      for (auto m = ldRes->getMembers(); m != Resource::end(); ++m) {
+        if (m->isGroup() || !m->getConstrained()) continue;
+        // Check skill: if the Load requires a specific skill, only
+        // include group members that possess it.
+        if (requiredSkill) {
+          bool hasSkill = false;
+          for (auto rs = m->getSkills();; ++rs) {
+            const ResourceSkill* rsk = &*rs;
+            if (!rsk) break;
+            if (rsk->getSkill() == requiredSkill) {
+              hasSkill = true; break;
+            }
+          }
+          if (!hasSkill) continue;
+        }
+        result.push_back(&*m);
+      }
     } else {
       result.push_back(ldRes);
     }
