@@ -2534,6 +2534,14 @@ function _reRenderCombinedGantt(target) {
     var demandGroups = window._combinedDemandGroups || {};
     if (!unified) return;
 
+    // Save scroll position ratio before re-render
+    var prevTimeCol = document.getElementById("cg-time-col");
+    var scrollRatio = 0;
+    if (prevTimeCol && prevTimeCol.scrollWidth > prevTimeCol.clientWidth) {
+        scrollRatio = prevTimeCol.scrollLeft / (prevTimeCol.scrollWidth - prevTimeCol.clientWidth);
+    }
+    try { if (scrollRatio > 0) sessionStorage.setItem("peGanttScroll", scrollRatio); } catch(e) {}
+
     // minT/maxT already padded by _buildGlobalTimeRange, use directly
     var minT = new Date(unified.minT.getTime());
     var maxT = new Date(unified.maxT.getTime());
@@ -2636,6 +2644,19 @@ function _reRenderCombinedGantt(target) {
 
     var boardEl = target.querySelector(".pe-gantt-board");
     _initBoardResizer(boardEl);
+
+    // Restore scroll position
+    var timeColEl = document.getElementById("cg-time-col");
+    if (timeColEl && timeColEl.scrollWidth > timeColEl.clientWidth) {
+        try {
+            var savedRatio = parseFloat(sessionStorage.getItem("peGanttScroll"));
+            if (savedRatio > 0 && savedRatio <= 1) {
+                setTimeout(function() {
+                    timeColEl.scrollLeft = savedRatio * (timeColEl.scrollWidth - timeColEl.clientWidth);
+                }, 0);
+            }
+        } catch(e) {}
+    }
 
     /* Tree toggle */
     function _updateDescendantVisibility(parentPathId) {
