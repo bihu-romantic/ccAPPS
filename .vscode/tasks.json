@@ -11,8 +11,7 @@
                 "kind": "build",
                 "isDefault": true
             },
-            "problemMatcher": ["$gcc"],
-            "detail": "CMake build solver library"
+            "problemMatcher": ["$gcc"]
         }
     ],
     "version": "2.0.0"
