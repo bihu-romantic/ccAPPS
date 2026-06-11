@@ -1,0 +1,19 @@
+{
+    "tasks": [
+        {
+            "type": "shell",
+            "label": "cmake build",
+            "command": "make -j$(nproc)",
+            "options": {
+                "cwd": "${workspaceFolder}/build2"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": ["$gcc"],
+            "detail": "CMake build solver library"
+        }
+    ],
+    "version": "2.0.0"
+}

@@ -36,6 +36,7 @@
                 "${workspaceFolder}/ccAPPSdb/common/commands.py"
             ],
             "stopAtEntry": false,
+            "preLaunchTask": "cmake build",
             "cwd": "${workspaceFolder}",
             "externalConsole": false,
             "MIMode": "gdb",
