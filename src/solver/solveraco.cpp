@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <iostream>
 #include <unordered_set>
 
 #include "ccAPPS/solveraco.h"
@@ -462,24 +463,64 @@ vector<CandidateOp> SolverACO::buildCandidates(
         }
       }
 
-      // Generate ONE candidate covering ALL constrained resources.
-      // Operations needing multiple resources (e.g. operator + machine)
-      // must occupy all of them simultaneously.
+      // Separate machines (non-group) from operators (group members).
+      // Generate one candidate per operator × machine combination so
+      // each operator has a fair chance to be selected.
       if (!altResources.empty()) {
-        CandidateOp c;
-        c.op = op;
-        c.allResources = vector<const Resource*>(
-            altResources.begin(), altResources.end());
-        c.res = c.allResources[0];  // primary resource
-        // Earliest start = max of material constraints across all resources
-        Date eStart = Plan::instance().getCurrent();
-        for (auto* r : c.allResources) {
-          Date rStart = earliestStart(op, r);
-          if (rStart > eStart) eStart = rStart;
+        vector<const Resource*> machines, operators;
+        for (auto* r : altResources) {
+          if (r->getOwner()) operators.push_back(r);
+          else machines.push_back(r);
         }
-        c.earliestStart = eStart;
-        c.candId = nextId;
-        candidates.push_back(c);
+        // For each operator, create a candidate with all machines + this operator
+        if (!operators.empty()) {
+          for (auto* oper : operators) {
+            CandidateOp c;
+            c.op = op;
+            c.allResources = machines;
+            c.allResources.push_back(oper);
+            c.res = oper;
+            Date eStart = Plan::instance().getCurrent();
+            for (auto* r : c.allResources) {
+              Date rStart = earliestStart(op, r);
+              if (rStart > eStart) eStart = rStart;
+            }
+            c.earliestStart = eStart;
+            c.candId = nextId++;
+            candidates.push_back(c);
+          }
+        } else {
+          CandidateOp c;
+          c.op = op;
+          c.allResources = machines;
+          c.res = c.allResources[0];
+          Date eStart = Plan::instance().getCurrent();
+          for (auto* r : c.allResources) {
+            Date rStart = earliestStart(op, r);
+            if (rStart > eStart) eStart = rStart;
+          }
+          c.earliestStart = eStart;
+          c.candId = nextId++;
+          candidates.push_back(c);
+        }
+        // Advance nextId past the unused operator IDs to keep later IDs unique
+        if (!operators.empty()) { processed.insert(op); continue; }
+        // For the no-operator case, already incremented above, just continue
+        } else {
+          // No operators — just machines
+          CandidateOp c;
+          c.op = op;
+          c.allResources = machines;
+          c.res = c.allResources[0];
+          Date eStart = Plan::instance().getCurrent();
+          for (auto* r : c.allResources) {
+            Date rStart = earliestStart(op, r);
+            if (rStart > eStart) eStart = rStart;
+          }
+          c.earliestStart = eStart;
+          c.candId = nextId;
+          candidates.push_back(c);
+        }
       } else {
         // Fallback: no constrained resource, keep MRP assignment
         CandidateOp c;
@@ -652,6 +693,10 @@ AntSolution SolverACO::constructJointSolution(
     for (auto* res : shuffledRes) {
       auto& pool = byRes[res];
       if (pool.empty()) continue;
+      // Diagnostic: track if Carl ever gets a non-empty pool
+      if (res->getName() == "Carl") {
+        std::cerr << "ACO: Carl's turn, pool size=" << pool.size() << std::endl;
+      }
 
       // Build probability per candidate
       vector<double> probs(pool.size(), 0.0);
@@ -673,7 +718,12 @@ AntSolution SolverACO::constructJointSolution(
         auto usIt = upstreamScore.find(pool[i].op);
         if (usIt != upstreamScore.end())
           upstreamFactor = 1.0 + 0.3 * usIt->second;
-        double eta = heuristic(prevOp[res], pool[i].op) * readiness * upstreamFactor;
+        // Load balance: penalize resources that already have heavy load,
+        // giving idle resources a chance to be selected.
+        double resLoadH = static_cast<double>(
+            (curTime[res] - Plan::instance().getCurrent()).getSeconds()) / 3600.0;
+        double loadFactor = 1.0 / (1.0 + resLoadH * 0.05);
+        double eta = heuristic(prevOp[res], pool[i].op) * readiness * upstreamFactor * loadFactor;
         probs[i] = pow(tau, config_.alpha) * pow(eta, config_.beta);
         total += probs[i];
       }
@@ -1253,10 +1303,12 @@ void SolverACO::solve(void* v) {
 
   vector<const Resource*> bottleneck = collectBottlenecks();
 
-  // Diagnostic: always log that ACO entry was reached
-  if (getLogLevel() >= 0)
-    logger << indentlevel << "ACO: entry, found " << bottleneck.size()
-           << " bottleneck resources\n";
+  // Diagnostic
+  std::cerr << "ACO: " << bottleneck.size() << " bottlenecks:";
+  for (auto* r : bottleneck) std::cerr << " " << r->getName();
+  std::cerr << std::endl;
+  logger << "ACO: " << bottleneck.size() << " bottlenecks\n";
+  for (auto* r : bottleneck) { logger << "  - "; logger << r->getName().c_str(); logger << "\n"; }
 
   // No bottleneck resources → nothing for ACO to optimize.
   if (bottleneck.empty()) {

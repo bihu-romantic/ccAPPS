@@ -50,7 +50,7 @@ struct ACOConfig {
   double weight_cost = 0.5;
   double weight_setup = 0.3;
   double weight_priority = 10.0;
-  double weight_balance = 0.1;
+  double weight_balance = 0.5;
   int elite_ants = 3;
   bool runMRP = true;
   bool joint_optimization = true;
