@@ -393,10 +393,8 @@ vector<const Resource*> SolverACO::getConstrainedResources(
         // include group members that possess it.
         if (requiredSkill) {
           bool hasSkill = false;
-          for (auto rs = m->getSkills();; ++rs) {
-            const ResourceSkill* rsk = &*rs;
-            if (!rsk) break;
-            if (rsk->getSkill() == requiredSkill) {
+          for (auto rs = m->getSkills(); rs != Resource::skilllist::const_iterator(nullptr); ++rs) {
+            if (rs->getSkill() == requiredSkill) {
               hasSkill = true; break;
             }
           }
@@ -640,12 +638,18 @@ AntSolution SolverACO::constructJointSolution(
   // on other resources see the updated material timing.
   unordered_map<const Buffer*, Date> materialAvailable;
 
+  // Shuffle resource order so no operator is always last.
+  // Without this, alphabetically-later operators may never get
+  // a turn because earlier operators take all candidates first.
+  vector<const Resource*> shuffledRes = resources;
+  shuffle(shuffledRes.begin(), shuffledRes.end(), rng_);
+
   // Total remaining candidates
   size_t remaining = allCandidates.size();
   while (remaining > 0) {
     bool progress = false;
 
-    for (auto* res : resources) {
+    for (auto* res : shuffledRes) {
       auto& pool = byRes[res];
       if (pool.empty()) continue;
 
@@ -1214,6 +1218,7 @@ void SolverACO::solve(void* v) {
   // or update material availability dates).
   auto collectBottlenecks = [&]() -> vector<const Resource*> {
     vector<const Resource*> bn;
+    unordered_set<const Resource*> activeGroups;
     for (auto res = Resource::begin(); res != Resource::end(); ++res) {
       if (!res->getConstrained()) continue;
       if (res->isGroup()) {
@@ -1221,13 +1226,26 @@ void SolverACO::solve(void* v) {
           if (!m->isGroup() && m->getConstrained()) {
             vector<OperationPlan*> plans;
             collectResourcePlans(&*m, plans);
-            if (plans.size() >= 2) bn.push_back(&*m);
+            if (plans.size() >= 2) {
+              bn.push_back(&*m);
+              activeGroups.insert(&*res);
+            }
           }
         }
       } else {
         vector<OperationPlan*> plans;
         collectResourcePlans(&*res, plans);
         if (plans.size() >= 2) bn.push_back(&*res);
+      }
+    }
+    // Include all constrained members of active groups
+    for (auto* grp : activeGroups) {
+      for (auto m = grp->getMembers(); m != Resource::end(); ++m) {
+        if (!m->isGroup() && m->getConstrained()) {
+          bool alreadyIn = false;
+          for (auto* r : bn) if (r == &*m) { alreadyIn = true; break; }
+          if (!alreadyIn) bn.push_back(&*m);
+        }
       }
     }
     return bn;
