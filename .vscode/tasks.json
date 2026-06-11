@@ -1,4 +1,5 @@
 {
+    "version": "2.0.0",
     "tasks": [
         {
             "type": "shell",
@@ -13,6 +14,5 @@
             },
             "problemMatcher": ["$gcc"]
         }
-    ],
-    "version": "2.0.0"
+    ]
 }
