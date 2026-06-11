@@ -25,7 +25,6 @@
 
 #include <algorithm>
 #include <cfloat>
-#include <iostream>
 #include <unordered_set>
 
 #include "ccAPPS/solveraco.h"
@@ -693,10 +692,6 @@ AntSolution SolverACO::constructJointSolution(
     for (auto* res : shuffledRes) {
       auto& pool = byRes[res];
       if (pool.empty()) continue;
-      // Diagnostic: track if Carl ever gets a non-empty pool
-      if (res->getName() == "Carl") {
-        std::cerr << "ACO: Carl's turn, pool size=" << pool.size() << std::endl;
-      }
 
       // Build probability per candidate
       vector<double> probs(pool.size(), 0.0);
@@ -1304,9 +1299,6 @@ void SolverACO::solve(void* v) {
   vector<const Resource*> bottleneck = collectBottlenecks();
 
   // Diagnostic
-  std::cerr << "ACO: " << bottleneck.size() << " bottlenecks:";
-  for (auto* r : bottleneck) std::cerr << " " << r->getName();
-  std::cerr << std::endl;
   logger << "ACO: " << bottleneck.size() << " bottlenecks\n";
   for (auto* r : bottleneck) { logger << "  - "; logger << r->getName().c_str(); logger << "\n"; }
 
