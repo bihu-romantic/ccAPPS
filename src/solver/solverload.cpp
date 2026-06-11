@@ -160,9 +160,9 @@ void SolverCreate::chooseResource(
 
   // Loop over all candidate resources
   while (!res_stack.empty()) {
-    // Pick next resource (take from front for fair distribution)
-    Resource* res = res_stack.front();
-    res_stack.erase(res_stack.begin());
+    // Pick next resource
+    Resource* res = res_stack.back();
+    res_stack.pop_back();
 
     // Check if the resource has the right skill
     // TODO if there is a date effective skill, we need to consider it in the
