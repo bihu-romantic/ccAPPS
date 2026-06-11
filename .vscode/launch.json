@@ -1,39 +1,42 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Web server Python",
+            "name": "Web service Python",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/frepplectl.py",
+            "program": "${workspaceFolder}/ccAPPSctl.py",
             "console": "integratedTerminal",
             "justMyCode": false,
             "args": [
-                "runserver"
-            ]
+                "runserver",
+                "0.0.0.0:8001"
+            ],
+            "env": {
+                "DJANGO_SETTINGS_MODULE": "ccAPPSdb.settings",
+                "VIRTUAL_ENV": "${workspaceFolder}/venv",
+                "PYTHONPATH": "${workspaceFolder}"
+            }
         },
         {
-            "name": "Web service Python",
+            "name": "Attach Python",
             "type": "debugpy",
             "request": "attach",
             "connect": {
                 "host": "127.0.0.1",
-                "port": 17999,
+                "port": 17999
             }
         },
         {
             "name": "Planning engine",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/bin/frepple",
+            "program": "${workspaceFolder}/venv/bin/python",
             "args": [
-                "${workspaceFolder}/freppledb/common/commands.py"
+                "${workspaceFolder}/ccAPPSdb/common/commands.py"
             ],
             "stopAtEntry": false,
-            "cwd": "${workspaceFolder}/bin",
+            "cwd": "${workspaceFolder}",
             "externalConsole": false,
             "MIMode": "gdb",
             "setupCommands": [
@@ -44,50 +47,14 @@
                 }
             ],
             "environment": [
-                {
-                    "name": "FREPPLE_PLANTYPE",
-                    "value": "1"
-                },
-                {
-                    "name": "FREPPLE_CONSTRAINT",
-                    "value": "15"
-                },
-                {
-                    "name": "FREPPLE_DATABASE",
-                    "value": "default"
-                },
-                {
-                    "name": "PYTHONPATH",
-                    "value": "${workspaceFolder}"
-                },
-                {
-                    "name": "DJANGO_SETTINGS_MODULE",
-                    "value": "freppledb.settings"
-                },
-                {
-                    "name": "supply",
-                    "value": "1"
-                },
-                {
-                    "name": "fcst",
-                    "value": "1"
-                },
-                {
-                    "name": "invplan",
-                    "value": "1"
-                },
-                {
-                    "name": "FREPPLE_LOGFILE",
-                    "value": "frepple.log"
-                },
-                {
-                    "name": "VIRTUAL_ENV",
-                    "value": "${workspaceFolder}/venv"
-                },
-                {
-                    "name": "debugpy",
-                    "value": "1"
-                }
+                {"name": "CCAPPS_PLANTYPE", "value": "1"},
+                {"name": "CCAPPS_CONSTRAINT", "value": "28"},
+                {"name": "CCAPPS_DATABASE", "value": "scenario6"},
+                {"name": "PYTHONPATH", "value": "${workspaceFolder}"},
+                {"name": "DJANGO_SETTINGS_MODULE", "value": "ccAPPSdb.settings"},
+                {"name": "supply", "value": "1"},
+                {"name": "VIRTUAL_ENV", "value": "${workspaceFolder}/venv"},
+                {"name": "LD_LIBRARY_PATH", "value": "${workspaceFolder}/build2/src"}
             ]
         }
     ]
