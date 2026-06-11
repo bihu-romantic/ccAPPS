@@ -49,14 +49,38 @@
                 }
             ],
             "environment": [
-                {"name": "CCAPPS_PLANTYPE", "value": "1"},
-                {"name": "CCAPPS_CONSTRAINT", "value": "28"},
-                {"name": "CCAPPS_DATABASE", "value": "scenario6"},
-                {"name": "PYTHONPATH", "value": "${workspaceFolder}"},
-                {"name": "DJANGO_SETTINGS_MODULE", "value": "ccAPPSdb.settings"},
-                {"name": "supply", "value": "1"},
-                {"name": "VIRTUAL_ENV", "value": "${workspaceFolder}/venv"},
-                {"name": "LD_LIBRARY_PATH", "value": "${workspaceFolder}/build2/src"}
+                {
+                    "name": "CCAPPS_PLANTYPE",
+                    "value": "1"
+                },
+                {
+                    "name": "CCAPPS_CONSTRAINT",
+                    "value": "28"
+                },
+                {
+                    "name": "CCAPPS_DATABASE",
+                    "value": "scenario6"
+                },
+                {
+                    "name": "PYTHONPATH",
+                    "value": "${workspaceFolder}"
+                },
+                {
+                    "name": "DJANGO_SETTINGS_MODULE",
+                    "value": "ccAPPSdb.settings"
+                },
+                {
+                    "name": "supply",
+                    "value": "1"
+                },
+                {
+                    "name": "VIRTUAL_ENV",
+                    "value": "${workspaceFolder}/venv"
+                },
+                {
+                    "name": "LD_LIBRARY_PATH",
+                    "value": "${workspaceFolder}/build2/src"
+                }
             ]
         }
     ]
