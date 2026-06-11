@@ -601,6 +601,37 @@ AntSolution SolverACO::constructJointSolution(
     prevOp[r] = nullptr;
   }
 
+  // Upstream priority map: operations that produce buffers consumed by
+  // other candidates get a scheduling bonus. This helps respect process
+  // routing order (e.g., Saw before Assemble).
+  unordered_map<const OperationPlan*, int> upstreamScore;
+  {
+    // Collect buffers consumed by candidates
+    unordered_map<const Buffer*, int> consumerCount;
+    for (auto& c : allCandidates) {
+      if (!c.op) continue;
+      for (auto fp = c.op->beginFlowPlans(); fp != c.op->endFlowPlans(); ++fp) {
+        if (fp->getQuantity() >= 0.0) continue;  // consuming flows
+        const Buffer* buf = fp->getBuffer();
+        if (buf) consumerCount[buf]++;
+      }
+    }
+    // Score each candidate by how many downstream ops depend on its output
+    for (auto& c : allCandidates) {
+      if (!c.op) continue;
+      int score = 0;
+      for (auto fp = c.op->beginFlowPlans(); fp != c.op->endFlowPlans(); ++fp) {
+        if (fp->getQuantity() <= 0.0) continue;  // producing flows
+        const Buffer* buf = fp->getBuffer();
+        if (buf) {
+          auto it = consumerCount.find(buf);
+          if (it != consumerCount.end()) score = max(score, it->second);
+        }
+      }
+      if (score > 0) upstreamScore[c.op] = score;
+    }
+  }
+
   // Dynamic material availability clock: tracks when each buffer receives
   // material from operations already scheduled during this ant's construction.
   // Initialized empty — the static earliestStart snapshot handles pre-ACO
@@ -632,7 +663,13 @@ AntSolution SolverACO::constructJointSolution(
         double readiness = 1.0 / (1.0 + waitH);
         double tau = pheromones_[res].get(prevOp[res], pool[i].op);
         if (tau <= 0.0) tau = config_.tau0;
-        double eta = heuristic(prevOp[res], pool[i].op) * readiness;
+        // Upstream bonus: prefer operations that produce materials
+        // consumed by other candidates (respect process routing order).
+        double upstreamFactor = 1.0;
+        auto usIt = upstreamScore.find(pool[i].op);
+        if (usIt != upstreamScore.end())
+          upstreamFactor = 1.0 + 0.3 * usIt->second;
+        double eta = heuristic(prevOp[res], pool[i].op) * readiness * upstreamFactor;
         probs[i] = pow(tau, config_.alpha) * pow(eta, config_.beta);
         total += probs[i];
       }
