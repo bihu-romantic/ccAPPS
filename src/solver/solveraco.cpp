@@ -464,26 +464,47 @@ vector<CandidateOp> SolverACO::buildCandidates(
         }
       }
 
-      // Generate ONE candidate covering ALL constrained resources.
-      // Operations needing multiple resources (e.g. operator + machine)
-      // must occupy all of them simultaneously.
+      // Separate machines from operators (group members).
+      // Generate one candidate per operator so each has a fair chance.
       if (!altResources.empty()) {
-        CandidateOp c;
-        c.op = op;
-        c.allResources = vector<const Resource*>(
-            altResources.begin(), altResources.end());
-        c.res = c.allResources[0];  // primary resource
-        // Earliest start = max of material constraints across all resources
-        Date eStart = Plan::instance().getCurrent();
-        for (auto* r : c.allResources) {
-          Date rStart = earliestStart(op, r);
-          if (rStart > eStart) eStart = rStart;
+        vector<const Resource*> machines, operators;
+        for (auto* r : altResources) {
+          // A resource is an operator if it has a parent (owner)
+          if (r->getOwner() && r->getOwner() != r) operators.push_back(r);
+          else machines.push_back(r);
         }
-        c.earliestStart = eStart;
-        c.candId = nextId;
-        candidates.push_back(c);
+        if (!operators.empty()) {
+          for (auto* oper : operators) {
+            CandidateOp c;
+            c.op = op;
+            c.allResources = machines;
+            c.allResources.push_back(oper);
+            c.res = oper;
+            Date eStart = Plan::instance().getCurrent();
+            for (auto* r : c.allResources) {
+              Date rStart = earliestStart(op, r);
+              if (rStart > eStart) eStart = rStart;
+            }
+            c.earliestStart = eStart;
+            c.candId = nextId++;
+            candidates.push_back(c);
+          }
+          processed.insert(op); continue; // skip outer ++nextId
+        } else {
+          CandidateOp c;
+          c.op = op;
+          c.allResources = machines;
+          c.res = c.allResources[0];
+          Date eStart = Plan::instance().getCurrent();
+          for (auto* r : c.allResources) {
+            Date rStart = earliestStart(op, r);
+            if (rStart > eStart) eStart = rStart;
+          }
+          c.earliestStart = eStart;
+          c.candId = nextId;
+          candidates.push_back(c);
+        }
       } else {
-        // Fallback: no constrained resource, keep MRP assignment
         CandidateOp c;
         c.op = op;
         c.res = res;
@@ -669,7 +690,14 @@ AntSolution SolverACO::constructJointSolution(
         auto usIt = upstreamScore.find(pool[i].op);
         if (usIt != upstreamScore.end())
           upstreamFactor = 1.0 + 0.3 * usIt->second;
-        double eta = heuristic(prevOp[res], pool[i].op) * readiness * upstreamFactor;
+        // Load balance: strongly penalize heavily-used operators.
+        // curTime tracks when each resource is free; relative to plan start,
+        // this is proportional to accumulated load.
+        double curLoadH = static_cast<double>(
+            (curTime[res] - Plan::instance().getCurrent()).getSeconds()) / 3600.0;
+        double loadBalance = 1.0 / (1.0 + curLoadH * 2.0);
+        double eta = heuristic(prevOp[res], pool[i].op) * readiness
+                     * upstreamFactor * loadBalance;
         probs[i] = pow(tau, config_.alpha) * pow(eta, config_.beta);
         total += probs[i];
       }
@@ -1212,8 +1240,9 @@ void SolverACO::solve(void* v) {
   // Extracted as a lambda so the bottleneck set can be refreshed after each
   // MRP pass (MRP may create new supply ops, change resource assignments,
   // or update material availability dates).
-  auto collectBottlenecks = [&]() -> vector<const Resource*> {
+    auto collectBottlenecks = [&]() -> vector<const Resource*> {
     vector<const Resource*> bn;
+    unordered_set<const Resource*> activeGroups;
     for (auto res = Resource::begin(); res != Resource::end(); ++res) {
       if (!res->getConstrained()) continue;
       if (res->isGroup()) {
@@ -1221,7 +1250,10 @@ void SolverACO::solve(void* v) {
           if (!m->isGroup() && m->getConstrained()) {
             vector<OperationPlan*> plans;
             collectResourcePlans(&*m, plans);
-            if (plans.size() >= 2) bn.push_back(&*m);
+            if (plans.size() >= 2) {
+              bn.push_back(&*m);
+              activeGroups.insert(&*res);
+            }
           }
         }
       } else {
@@ -1230,10 +1262,20 @@ void SolverACO::solve(void* v) {
         if (plans.size() >= 2) bn.push_back(&*res);
       }
     }
+    // Include ALL constrained members of active groups
+    for (auto* grp : activeGroups) {
+      for (auto m = grp->getMembers(); m != Resource::end(); ++m) {
+        if (!m->isGroup() && m->getConstrained()) {
+          bool alreadyIn = false;
+          for (auto* r : bn) if (r == &*m) { alreadyIn = true; break; }
+          if (!alreadyIn) bn.push_back(&*m);
+        }
+      }
+    }
     return bn;
   };
 
-  vector<const Resource*> bottleneck = collectBottlenecks();
+vector<const Resource*> bottleneck = collectBottlenecks();
 
   // Diagnostic: always log that ACO entry was reached
   if (getLogLevel() >= 0)
