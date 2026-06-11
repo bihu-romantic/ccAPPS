@@ -35,7 +35,7 @@
             "args": [
                 "${workspaceFolder}/ccAPPSdb/common/commands.py"
             ],
-            "stopAtEntry": false,
+            "stopAtEntry": true,
             "preLaunchTask": "cmake build",
             "cwd": "${workspaceFolder}",
             "externalConsole": false,

@@ -504,10 +504,14 @@ bool SolverCreate::checkOperationLeadTime(OperationPlan* opplan,
       Resource* res = res_stack.top();
       res_stack.pop();
 
-      // If it's an aggregate, push it's members on the stack
+      // If it's an aggregate, push its members on the stack in reverse
+      // order so they are popped alphabetically (first member first).
       if (res->isGroup()) {
+        vector<Resource*> members;
         for (auto x = res->getMembers(); x != Resource::end(); ++x)
-          res_stack.push(&*x);
+          members.push_back(&*x);
+        for (auto it = members.rbegin(); it != members.rend(); ++it)
+          res_stack.push(*it);
         continue;
       }
 
