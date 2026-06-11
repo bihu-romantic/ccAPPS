@@ -34,7 +34,7 @@ namespace ccAPPS {
 const MetaClass* SolverACO::metadata;
 
 // ==========================================================================
-// PheromoneMatrix
+// Pheromone Matrix — stores transition probabilities between ops
 // ==========================================================================
 
 double PheromoneMatrix::get(const OperationPlan* from,
@@ -70,7 +70,7 @@ void PheromoneMatrix::deposit(const vector<OperationPlan*>& sequence,
 void PheromoneMatrix::reset(double /* tau0 */) { matrix_.clear(); }
 
 // ==========================================================================
-// SolverACO Python init
+// Python Interface — register methods & global run_aco entry point
 // ==========================================================================
 
 static PyObject* solverACO_initPheromone(PyObject* self, PyObject* args) {
@@ -152,7 +152,7 @@ PyObject* SolverACO::create(PyTypeObject*, PyObject*, PyObject*) {
 }
 
 // ==========================================================================
-// Setup time helper
+// Setup Time — calculate changeover duration between two operations
 // ==========================================================================
 
 Duration SolverACO::computeSetupTime(const OperationPlan* from,
@@ -181,7 +181,7 @@ Duration SolverACO::computeSetupTime(const OperationPlan* from,
 }
 
 // ==========================================================================
-// Heuristic (factors 2+3: setup time + due date)
+// Heuristic — desirability of scheduling operation B after A
 // ==========================================================================
 
 double SolverACO::heuristic(const OperationPlan* from,
@@ -217,7 +217,7 @@ double SolverACO::heuristic(const OperationPlan* from,
 }
 
 // ==========================================================================
-// Duration estimation
+// Duration Estimation — approximate operation runtime on a resource
 // ==========================================================================
 
 Duration estimateOperationDuration(const OperationPlan* op, const Resource* res) {
@@ -243,7 +243,7 @@ Duration estimateOperationDuration(const OperationPlan* op, const Resource* res)
 }
 
 // ==========================================================================
-// Factor 5: Material availability (earliest start from PO arrival dates)
+// Material Availability — earliest start constrained by buffer on-hand
 // ==========================================================================
 
 Date SolverACO::earliestStart(const OperationPlan* op, const Resource* res) const {
@@ -302,7 +302,7 @@ Date SolverACO::dynamicEarliestStart(
 }
 
 // ==========================================================================
-// Factor 4: Cross-resource upstream blocking
+// Upstream Blocking (binary) — check if any upstream op is not yet complete
 // ==========================================================================
 
 bool SolverACO::isUpstreamBlocked(
@@ -375,7 +375,7 @@ Duration SolverACO::computeUpstreamWait(
 }
 
 // ==========================================================================
-// Helper: get all constrained resources an operation needs
+// Constrained Resources — expand groups & filter by skill for an operation
 // ==========================================================================
 
 vector<const Resource*> SolverACO::getConstrainedResources(
@@ -412,8 +412,7 @@ vector<const Resource*> SolverACO::getConstrainedResources(
 }
 
 // ==========================================================================
-// Factor 1: Build candidates from manufacturing orders
-// Each MO with ≥1 resource load generates candidates
+// Candidate Builder — generate one CandidateOp per operator per operation
 // ==========================================================================
 
 vector<CandidateOp> SolverACO::buildCandidates(
@@ -520,7 +519,7 @@ vector<CandidateOp> SolverACO::buildCandidates(
 }
 
 // ==========================================================================
-// Construct solution (single-resource legacy)
+// Single-Resource Construction — legacy greedy ant for one bottleneck
 // ==========================================================================
 
 AntSolution SolverACO::constructSolution(
@@ -593,7 +592,7 @@ AntSolution SolverACO::constructSolution(
 }
 
 // ==========================================================================
-// Construct joint solution using candidate pool
+// Joint Construction — multi-resource ant with roulette-wheel selection
 // ==========================================================================
 
 AntSolution SolverACO::constructJointSolution(
@@ -784,7 +783,7 @@ AntSolution SolverACO::constructJointSolution(
 }
 
 // ==========================================================================
-// Single-resource local search (legacy)
+// Single-Resource Local Search — 2-opt pairwise swap for one resource
 // ==========================================================================
 
 void SolverACO::localSearch(const Resource*, AntSolution& sol) {
@@ -928,7 +927,7 @@ void SolverACO::compactSchedule(
 }
 
 // ==========================================================================
-// Joint local search
+// Joint Local Search — 2-opt swap + compaction sync across all resources
 // ==========================================================================
 
 void SolverACO::localSearchJoint(AntSolution& sol) {
@@ -969,7 +968,7 @@ void SolverACO::localSearchJoint(AntSolution& sol) {
 }
 
 // ==========================================================================
-// Evaluate solution (factors 1-5 all contribute)
+// Fitness Evaluation — tardiness + cost + setup + load balance (negated)
 // ==========================================================================
 
 double SolverACO::evaluate(const AntSolution& sol) {
@@ -1046,7 +1045,7 @@ double SolverACO::evaluate(const AntSolution& sol) {
 }
 
 // ==========================================================================
-// Pheromone management
+// Pheromone Management — init / get for per-resource transition matrices
 // ==========================================================================
 
 void SolverACO::initPheromone(const Resource* res) {
@@ -1059,7 +1058,7 @@ const PheromoneMatrix* SolverACO::getPheromone(const Resource* res) const {
 }
 
 // ==========================================================================
-// Apply solution
+// Apply Best Solution — write ant schedule back to model via commands
 // ==========================================================================
 
 void SolverACO::applyBestSolution(const AntSolution& best) {
@@ -1113,7 +1112,7 @@ void SolverACO::applyBestSolution(const AntSolution& best) {
 }
 
 // ==========================================================================
-// Collect operationplans
+// Collect Operation Plans — gather all ops on a resource (helper)
 // ==========================================================================
 
 static void collectResourcePlans(const Resource* res,
@@ -1130,7 +1129,7 @@ static void collectResourcePlans(const Resource* res,
 }
 
 // ==========================================================================
-// Single-resource ACO (legacy fallback)
+// Single-Resource ACO — legacy solver for one bottleneck resource
 // ==========================================================================
 
 void SolverACO::solve(const Resource* res, void* v) {
@@ -1175,7 +1174,7 @@ void SolverACO::solve(const Resource* res, void* v) {
 }
 
 // ==========================================================================
-// Joint ACO
+// Joint ACO Solver — runs ant colony on multiple bottleneck resources
 // ==========================================================================
 
 void SolverACO::solveJoint(const vector<const Resource*>& resources) {
@@ -1232,7 +1231,7 @@ void SolverACO::solveJoint(const vector<const Resource*>& resources) {
 }
 
 // ==========================================================================
-// Top-level entry
+// Main Entry Point — collect bottlenecks → solve joint/single → MRP propagate
 // ==========================================================================
 
 void SolverACO::solve(void* v) {
