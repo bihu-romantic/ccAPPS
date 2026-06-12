@@ -56,6 +56,7 @@ struct ACOConfig {
   bool joint_optimization = true;
   int aco_mrp_iterations = 2;      // ACO↔MRP outer loops (1 = legacy single-pass)
   double aco_mrp_improvement = 0.01;  // Min relative fitness gain to continue
+  int purchase_material_mode = 1;  // 0 = infinite, 1 = current + lead time
 };
 
 /* A candidate operation plan that an ant can select.
@@ -131,6 +132,8 @@ class SolverACO : public SolverCreate {
   const ACOConfig& getConfig() const { return config_; }
   void setRunMRP(bool b) { config_.runMRP = b; }
   bool getRunMRP() const { return config_.runMRP; }
+  void setPurchaseMaterialMode(int m) { config_.purchase_material_mode = m; }
+  int getPurchaseMaterialMode() const { return config_.purchase_material_mode; }
 
   void solve(void* v = nullptr) override;
   void solve(const Resource* res, void* v = nullptr) override;
@@ -152,6 +155,7 @@ class SolverACO : public SolverCreate {
       const vector<const Resource*>& resources) const;
 
   Date earliestStart(const OperationPlan* op, const Resource* res) const;
+  Date purchaseMaterialAvailable(const Buffer* buf) const;
   Date dynamicEarliestStart(
       const OperationPlan* op,
       const unordered_map<const Buffer*, Date>& materialAvailable) const;

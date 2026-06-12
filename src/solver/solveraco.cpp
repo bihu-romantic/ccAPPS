@@ -101,6 +101,25 @@ static PyObject* solverACO_getRunMRP(PyObject* self, PyObject*) {
   return PyBool_FromLong(solver->getRunMRP() ? 1 : 0);
 }
 
+static PyObject* solverACO_setPurchaseMaterialMode(
+    PyObject* self, PyObject* args) {
+  auto* solver = static_cast<SolverACO*>(self);
+  int val;
+  if (!PyArg_ParseTuple(args, "i", &val)) return nullptr;
+  if (val < 0 || val > 1) {
+    PyErr_SetString(PyExc_ValueError,
+                    "Expected 0 (infinite) or 1 (leadtime)");
+    return nullptr;
+  }
+  solver->setPurchaseMaterialMode(val);
+  Py_RETURN_NONE;
+}
+
+static PyObject* solverACO_getPurchaseMaterialMode(PyObject* self, PyObject*) {
+  auto* solver = static_cast<SolverACO*>(self);
+  return PyLong_FromLong(solver->getPurchaseMaterialMode());
+}
+
 /* Global function: run ACO on constrained resources.
  * Called from Python as ccAPPS.run_aco(). */
 PyObject* run_aco(PyObject*, PyObject*) {
@@ -142,6 +161,11 @@ int SolverACO::initialize() {
               "Enable/disable MRP propagation after ACO sequencing");
   x.addMethod("getRunMRP", solverACO_getRunMRP, METH_NOARGS,
               "Check if MRP propagation is enabled");
+  x.addMethod("setPurchaseMaterialMode", solverACO_setPurchaseMaterialMode,
+              METH_VARARGS,
+              "Set ACO purchase material mode: 0=infinite, 1=leadtime");
+  x.addMethod("getPurchaseMaterialMode", solverACO_getPurchaseMaterialMode,
+              METH_NOARGS, "Get ACO purchase material mode");
 
   SolverACO::metadata->setPythonClass(x);
   return x.typeReady();
@@ -243,8 +267,40 @@ Duration estimateOperationDuration(const OperationPlan* op, const Resource* res)
 }
 
 // ==========================================================================
-// Factor 5: Material availability (earliest start from PO arrival dates)
+// Factor 5: Material availability
 // ==========================================================================
+
+Date SolverACO::purchaseMaterialAvailable(const Buffer* buf) const {
+  if (!buf || !buf->getItem()) return Date::infiniteFuture;
+  Date current = Plan::instance().getCurrent();
+  Date earliest = Date::infiniteFuture;
+
+  Item* item = buf->getItem();
+  while (item) {
+    Item::supplierlist::const_iterator supitem_iter =
+        item->getSupplierIterator();
+    while (ItemSupplier* supitem = supitem_iter.next()) {
+      if (!supitem->getPriority()) continue;
+      if (!supitem->getEffective().within(current)) continue;
+
+      // Match the same location applicability rule used when buffers create
+      // purchase operations from item suppliers.
+      if (supitem->getLocation()) {
+        if ((buf->getLocation() && buf->getLocation() != supitem->getLocation()) ||
+            !buf->getLocation())
+          continue;
+      }
+
+      Date available = config_.purchase_material_mode == 0
+          ? current
+          : current + supitem->getLeadTime();
+      if (available < earliest) earliest = available;
+    }
+    item = item->getOwner();
+  }
+
+  return earliest;
+}
 
 Date SolverACO::earliestStart(const OperationPlan* op, const Resource* res) const {
   Date earliest = Plan::instance().getCurrent();
@@ -254,9 +310,19 @@ Date SolverACO::earliestStart(const OperationPlan* op, const Resource* res) cons
     if (fp->getQuantity() >= 0.0) continue;  // skip producing flows
     Buffer* buf = fp->getBuffer();
     if (!buf) continue;
-    // Find when material first becomes available
+    // Find when material first becomes available. Current stock can be used
+    // immediately; purchasable material follows the configured ACO purchase
+    // material mode instead of waiting for an existing PO flowplan.
+    double currentOnhand =
+        buf->getOnHand(Plan::instance().getCurrent(), false);
+    if (currentOnhand >= -ROUNDING_ERROR) continue;  // enough on hand now
+    Date purchaseDate = purchaseMaterialAvailable(buf);
+    if (purchaseDate != Date::infiniteFuture) {
+      if (purchaseDate > earliest) earliest = purchaseDate;
+      continue;
+    }
     double onhand = buf->getOnHand(Date::infiniteFuture, false);
-    if (onhand >= -ROUNDING_ERROR) continue;  // enough on hand
+    if (onhand >= -ROUNDING_ERROR) continue;  // enough on hand eventually
     // Scan flowplans for the first incoming supply
     for (auto sfp = buf->getFlowPlans().begin();
          sfp != buf->getFlowPlans().end(); ++sfp) {
@@ -706,6 +772,12 @@ AntSolution SolverACO::constructJointSolution(
       // Existing stock can satisfy this consuming flow when no ACO candidate
       // producer still needs to be scheduled first.
       if (buf->getOnHand(Date::infiniteFuture, false) >= -ROUNDING_ERROR)
+        continue;
+
+      // Purchased materials are considered unlimited by ACO according to the
+      // configured purchase material mode. earliestStart will enforce either
+      // immediate availability or current time plus supplier lead time.
+      if (purchaseMaterialAvailable(buf) != Date::infiniteFuture)
         continue;
 
       for (auto pfp = buf->getFlowPlans().begin();
