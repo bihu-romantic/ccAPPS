@@ -171,9 +171,6 @@ class SolverACO : public SolverCreate {
   void compactSchedule(AntSolution& ant,
       const vector<const Resource*>& resources,
       const unordered_map<const Resource*, Date>& resourceTimes);
-  double evaluateJoint(
-      const AntSolution& solution,
-      const unordered_map<const Resource*, Date>& resourceTimes);
 
   /* ---- Shared helpers ---- */
   double heuristic(const OperationPlan* from, const OperationPlan* to) const;

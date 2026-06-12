@@ -34,7 +34,7 @@ namespace ccAPPS {
 const MetaClass* SolverACO::metadata;
 
 // ==========================================================================
-// Pheromone Matrix — stores transition probabilities between ops
+// PheromoneMatrix
 // ==========================================================================
 
 double PheromoneMatrix::get(const OperationPlan* from,
@@ -70,7 +70,7 @@ void PheromoneMatrix::deposit(const vector<OperationPlan*>& sequence,
 void PheromoneMatrix::reset(double /* tau0 */) { matrix_.clear(); }
 
 // ==========================================================================
-// Python Interface — register methods & global run_aco entry point
+// SolverACO Python init
 // ==========================================================================
 
 static PyObject* solverACO_initPheromone(PyObject* self, PyObject* args) {
@@ -152,7 +152,7 @@ PyObject* SolverACO::create(PyTypeObject*, PyObject*, PyObject*) {
 }
 
 // ==========================================================================
-// Setup Time — calculate changeover duration between two operations
+// Setup time helper
 // ==========================================================================
 
 Duration SolverACO::computeSetupTime(const OperationPlan* from,
@@ -181,7 +181,7 @@ Duration SolverACO::computeSetupTime(const OperationPlan* from,
 }
 
 // ==========================================================================
-// Heuristic — desirability of scheduling operation B after A
+// Heuristic (factors 2+3: setup time + due date)
 // ==========================================================================
 
 double SolverACO::heuristic(const OperationPlan* from,
@@ -217,7 +217,7 @@ double SolverACO::heuristic(const OperationPlan* from,
 }
 
 // ==========================================================================
-// Duration Estimation — approximate operation runtime on a resource
+// Duration estimation
 // ==========================================================================
 
 Duration estimateOperationDuration(const OperationPlan* op, const Resource* res) {
@@ -243,7 +243,7 @@ Duration estimateOperationDuration(const OperationPlan* op, const Resource* res)
 }
 
 // ==========================================================================
-// Material Availability — earliest start constrained by buffer on-hand
+// Factor 5: Material availability (earliest start from PO arrival dates)
 // ==========================================================================
 
 Date SolverACO::earliestStart(const OperationPlan* op, const Resource* res) const {
@@ -302,7 +302,7 @@ Date SolverACO::dynamicEarliestStart(
 }
 
 // ==========================================================================
-// Upstream Blocking (binary) — check if any upstream op is not yet complete
+// Factor 4: Cross-resource upstream blocking
 // ==========================================================================
 
 bool SolverACO::isUpstreamBlocked(
@@ -375,7 +375,7 @@ Duration SolverACO::computeUpstreamWait(
 }
 
 // ==========================================================================
-// Constrained Resources — expand groups & filter by skill for an operation
+// Helper: get all constrained resources an operation needs
 // ==========================================================================
 
 vector<const Resource*> SolverACO::getConstrainedResources(
@@ -412,7 +412,8 @@ vector<const Resource*> SolverACO::getConstrainedResources(
 }
 
 // ==========================================================================
-// Candidate Builder — generate one CandidateOp per operator per operation
+// Factor 1: Build candidates from manufacturing orders
+// Each MO with ≥1 resource load generates candidates
 // ==========================================================================
 
 vector<CandidateOp> SolverACO::buildCandidates(
@@ -519,7 +520,7 @@ vector<CandidateOp> SolverACO::buildCandidates(
 }
 
 // ==========================================================================
-// Single-Resource Construction — legacy greedy ant for one bottleneck
+// Construct solution (single-resource legacy)
 // ==========================================================================
 
 AntSolution SolverACO::constructSolution(
@@ -592,7 +593,7 @@ AntSolution SolverACO::constructSolution(
 }
 
 // ==========================================================================
-// Joint Construction — multi-resource ant with roulette-wheel selection
+// Construct joint solution using candidate pool
 // ==========================================================================
 
 AntSolution SolverACO::constructJointSolution(
@@ -603,14 +604,6 @@ AntSolution SolverACO::constructJointSolution(
   AntSolution ant;
   if (allCandidates.empty()) return ant;
 
-  // Group candidates by ALL required resources.
-  // Multi-resource operations appear in each resource's pool so they
-  // can be selected when any of their resources gets a turn.
-  unordered_map<const Resource*, vector<CandidateOp>> byRes;
-  for (auto& c : allCandidates)
-    for (auto* r : c.allResources)
-      byRes[r].push_back(c);
-
   // Per-resource state
   unordered_map<const Resource*, const OperationPlan*> prevOp;
   unordered_map<const Resource*, Date> curTime;
@@ -619,6 +612,16 @@ AntSolution SolverACO::constructJointSolution(
     curTime[r] = (it != resourceTimes.end()) ? it->second
                   : Plan::instance().getCurrent();
     prevOp[r] = nullptr;
+  }
+  for (auto& c : allCandidates) {
+    for (auto* r : c.allResources) {
+      if (!curTime.count(r)) {
+        auto it = resourceTimes.find(r);
+        curTime[r] = (it != resourceTimes.end()) ? it->second
+                    : Plan::instance().getCurrent();
+      }
+      if (!prevOp.count(r)) prevOp[r] = nullptr;
+    }
   }
 
   // Upstream priority map: operations that produce buffers consumed by
@@ -660,130 +663,178 @@ AntSolution SolverACO::constructJointSolution(
   // on other resources see the updated material timing.
   unordered_map<const Buffer*, Date> materialAvailable;
 
-  // Total remaining candidates
-  size_t remaining = allCandidates.size();
-  while (remaining > 0) {
-    bool progress = false;
+  // Track unique operation plans. A single operation can have multiple
+  // candidate resource assignments; once one candidate is chosen, all other
+  // candidates for the same operation are implicitly excluded.
+  unordered_set<const OperationPlan*> candidateOps;
+  for (auto& c : allCandidates)
+    if (c.op) candidateOps.insert(c.op);
+  unordered_set<const OperationPlan*> scheduledOps;
 
-    for (auto* res : resources) {
-      auto& pool = byRes[res];
-      if (pool.empty()) continue;
+  auto isReady = [&](const OperationPlan* op) -> bool {
+    if (!op) return false;
+    for (auto fl = op->beginFlowPlans(); fl != op->endFlowPlans(); ++fl) {
+      if (fl->getQuantity() >= 0.0) continue;
+      Buffer* buf = fl->getBuffer();
+      if (!buf) continue;
 
-      // Build probability per candidate
-      vector<double> probs(pool.size(), 0.0);
-      double total = 0.0;
-      for (size_t i = 0; i < pool.size(); ++i) {
-        // Continuous readiness factor: replaces binary isUpstreamBlocked.
-        // Computes how long the operation must wait for upstream producers
-        // on other constrained resources, then maps to [~0, 1.0] via
-        // 1/(1+waitHours). Short waits → near 1.0, long waits → near 0.
-        Duration upWait = computeUpstreamWait(pool[i].op, curTime);
-        double waitH = upWait > Duration(0L)
-            ? static_cast<double>(upWait.getSeconds()) / 3600.0 : 0.0;
-        double readiness = 1.0 / (1.0 + waitH);
-        double tau = pheromones_[res].get(prevOp[res], pool[i].op);
-        if (tau <= 0.0) tau = config_.tau0;
-        // Upstream bonus: prefer operations that produce materials
-        // consumed by other candidates (respect process routing order).
-        double upstreamFactor = 1.0;
-        auto usIt = upstreamScore.find(pool[i].op);
-        if (usIt != upstreamScore.end())
-          upstreamFactor = 1.0 + 0.3 * usIt->second;
-        // Load balance: strongly penalize heavily-used operators.
-        // curTime tracks when each resource is free; relative to plan start,
-        // this is proportional to accumulated load.
-        double curLoadH = static_cast<double>(
-            (curTime[res] - Plan::instance().getCurrent()).getSeconds()) / 3600.0;
-        double loadBalance = 1.0 / (1.0 + curLoadH * 2.0);
-        double eta = heuristic(prevOp[res], pool[i].op) * readiness
-                     * upstreamFactor * loadBalance;
-        probs[i] = pow(tau, config_.alpha) * pow(eta, config_.beta);
-        total += probs[i];
-      }
-      if (total <= 0.0) continue;
+      bool hasCandidateProducer = false;
+      for (auto pfp = buf->getFlowPlans().begin();
+           pfp != buf->getFlowPlans().end(); ++pfp) {
+        if (pfp->getQuantity() <= 0.0) continue;
+        OperationPlan* producer = pfp->getOperationPlan();
+        if (!producer || producer == op) continue;
 
-      // Roulette selection
-      double r = uniform_real_distribution<double>(0.0, total)(rng_);
-      double cum = 0.0;
-      size_t sel = pool.size() - 1;
-      for (size_t i = 0; i < pool.size(); ++i) {
-        cum += probs[i];
-        if (cum >= r) { sel = i; break; }
-      }
-
-      CandidateOp chosen = pool[sel];
-      // Compute rawStart across ALL required resources — the operation
-      // can only begin when every resource it needs is free.
-      Date rawStart = chosen.earliestStart;
-      for (auto* r : chosen.allResources) {
-        Duration setup = computeSetupTime(prevOp[r], chosen.op);
-        rawStart = max(rawStart, curTime[r] + setup);
-      }
-      Date matEarliest = dynamicEarliestStart(chosen.op, materialAvailable);
-      rawStart = max(rawStart, matEarliest);
-      Duration dur = estimateOperationDuration(chosen.op, res);
-      // Apply calendar constraints
-      Date start, end;
-      if (chosen.op->getOperation()) {
-        DateRange range = chosen.op->getOperation()->calculateOperationTime(
-            chosen.op, rawStart, dur, true);
-        start = range.getStart();
-        end = range.getEnd();
-      } else {
-        start = rawStart;
-        end = rawStart + dur;
-      }
-
-      // Write to ALL resources this operation occupies
-      for (auto* r : chosen.allResources) {
-        ant.sequences[r].push_back(chosen.op);
-        ant.startDates[r].push_back(start);
-        ant.endDates[r].push_back(end);
-        ant.assignedResources[r].push_back(r);  // each resource keeps its own
-        prevOp[r] = chosen.op;
-        curTime[r] = end;
-      }
-
-      // Remove this operation from ALL resource pools (mutual exclusion).
-      // Multi-resource ops appear in every required resource's pool.
-      int removed = 0;
-      for (auto* r : resources) {
-        auto& rpool = byRes[r];
-        for (size_t k = 0; k < rpool.size(); ) {
-          if (rpool[k].candId == chosen.candId) {
-            rpool.erase(rpool.begin() + k);
-            removed++;
-          } else {
-            ++k;
-          }
+        // Hard precedence: if the upstream producer is part of this ACO
+        // candidate set, downstream operations can only be scheduled after
+        // that producer has been selected and placed by this ant.
+        if (candidateOps.count(producer)) {
+          hasCandidateProducer = true;
+          if (!scheduledOps.count(producer)) return false;
         }
       }
-      remaining -= removed;
 
-      // Update material availability clock
-      for (auto fp = chosen.op->beginFlowPlans();
-           fp != chosen.op->endFlowPlans(); ++fp) {
-        if (fp->getQuantity() < 0.0) continue;
-        const Buffer* buf = fp->getBuffer();
-        if (!buf) continue;
-        auto it = materialAvailable.find(buf);
-        if (it == materialAvailable.end() || end > it->second)
-          materialAvailable[buf] = end;
+      if (hasCandidateProducer)
+        continue;
+
+      // Existing stock can satisfy this consuming flow when no ACO candidate
+      // producer still needs to be scheduled first.
+      if (buf->getOnHand(Date::infiniteFuture, false) >= -ROUNDING_ERROR)
+        continue;
+
+      for (auto pfp = buf->getFlowPlans().begin();
+           pfp != buf->getFlowPlans().end(); ++pfp) {
+        if (pfp->getQuantity() <= 0.0) continue;
+        OperationPlan* producer = pfp->getOperationPlan();
+        if (!producer || producer == op) continue;
+
+        // External upstream supply must have a known completion date.
+        if (producer->getEnd() == Date::infiniteFuture)
+          return false;
       }
+    }
+    return true;
+  };
 
-      prevOp[res] = chosen.op;
-      curTime[res] = end;
-      progress = true;
+  // Total remaining unique operations.
+  size_t remaining = candidateOps.size();
+  while (remaining > 0) {
+    vector<const CandidateOp*> readyCandidates;
+    vector<double> probs;
+    double total = 0.0;
+
+    for (auto& c : allCandidates) {
+      if (!c.op || scheduledOps.count(c.op) || c.allResources.empty())
+        continue;
+      if (!isReady(c.op)) continue;
+
+      // Continuous readiness still helps rank candidates that depend on
+      // external producers with an existing completion date.
+      Duration upWait = computeUpstreamWait(c.op, curTime);
+      double waitH = upWait > Duration(0L)
+          ? static_cast<double>(upWait.getSeconds()) / 3600.0 : 0.0;
+      double readiness = 1.0 / (1.0 + waitH);
+
+      double tau = 0.0;
+      double eta = 0.0;
+      for (auto* r : c.allResources) {
+        double t = pheromones_[r].get(prevOp[r], c.op);
+        if (t <= 0.0) t = config_.tau0;
+        tau += t;
+
+        double curLoadH = static_cast<double>(
+            (curTime[r] - Plan::instance().getCurrent()).getSeconds()) / 3600.0;
+        double loadBalance = 1.0 / (1.0 + curLoadH * 2.0);
+        eta += heuristic(prevOp[r], c.op) * loadBalance;
+      }
+      tau /= static_cast<double>(c.allResources.size());
+      eta /= static_cast<double>(c.allResources.size());
+
+      double upstreamFactor = 1.0;
+      auto usIt = upstreamScore.find(c.op);
+      if (usIt != upstreamScore.end())
+        upstreamFactor = 1.0 + 0.3 * usIt->second;
+
+      double probability = pow(tau, config_.alpha) *
+          pow(max(eta * readiness * upstreamFactor, 1e-9), config_.beta);
+      if (probability <= 0.0) continue;
+
+      readyCandidates.push_back(&c);
+      probs.push_back(probability);
+      total += probability;
     }
 
-    if (!progress) break;  // all remaining blocked — they will be scheduled in next MRP pass
+    if (readyCandidates.empty() || total <= 0.0)
+      break;  // Remaining operations are blocked by unscheduled upstream work.
+
+    // Roulette selection over ready operation candidates. This makes the
+    // operation choose its resource assignment, instead of a resource choosing
+    // the next operation from its own pool.
+    double r = uniform_real_distribution<double>(0.0, total)(rng_);
+    double cum = 0.0;
+    size_t sel = readyCandidates.size() - 1;
+    for (size_t i = 0; i < readyCandidates.size(); ++i) {
+      cum += probs[i];
+      if (cum >= r) { sel = i; break; }
+    }
+
+    CandidateOp chosen = *readyCandidates[sel];
+
+    // Compute rawStart across ALL required resources. The operation can only
+    // begin when every required resource is free and all scheduled upstream
+    // producers have made their material available.
+    Date rawStart = chosen.earliestStart;
+    for (auto* r : chosen.allResources) {
+      Duration setup = computeSetupTime(prevOp[r], chosen.op);
+      rawStart = max(rawStart, curTime[r] + setup);
+    }
+    Date matEarliest = dynamicEarliestStart(chosen.op, materialAvailable);
+    rawStart = max(rawStart, matEarliest);
+
+    const Resource* durationResource = chosen.res ? chosen.res
+        : chosen.allResources.front();
+    Duration dur = estimateOperationDuration(chosen.op, durationResource);
+    Date start, end;
+    if (chosen.op->getOperation()) {
+      DateRange range = chosen.op->getOperation()->calculateOperationTime(
+          chosen.op, rawStart, dur, true);
+      start = range.getStart();
+      end = range.getEnd();
+    } else {
+      start = rawStart;
+      end = rawStart + dur;
+    }
+
+    // Write to ALL resources this operation occupies.
+    for (auto* r : chosen.allResources) {
+      ant.sequences[r].push_back(chosen.op);
+      ant.startDates[r].push_back(start);
+      ant.endDates[r].push_back(end);
+      ant.assignedResources[r].push_back(r);
+      prevOp[r] = chosen.op;
+      curTime[r] = end;
+    }
+
+    // Update material availability clock for downstream operations.
+    for (auto fp = chosen.op->beginFlowPlans();
+         fp != chosen.op->endFlowPlans(); ++fp) {
+      if (fp->getQuantity() < 0.0) continue;
+      const Buffer* buf = fp->getBuffer();
+      if (!buf) continue;
+      auto it = materialAvailable.find(buf);
+      if (it == materialAvailable.end() || end > it->second)
+        materialAvailable[buf] = end;
+    }
+
+    scheduledOps.insert(chosen.op);
+    --remaining;
   }
 
   return ant;
 }
 
 // ==========================================================================
-// Single-Resource Local Search — 2-opt pairwise swap for one resource
+// Single-resource local search (legacy)
 // ==========================================================================
 
 void SolverACO::localSearch(const Resource*, AntSolution& sol) {
@@ -927,7 +978,7 @@ void SolverACO::compactSchedule(
 }
 
 // ==========================================================================
-// Joint Local Search — 2-opt swap + compaction sync across all resources
+// Joint local search
 // ==========================================================================
 
 void SolverACO::localSearchJoint(AntSolution& sol) {
@@ -968,7 +1019,7 @@ void SolverACO::localSearchJoint(AntSolution& sol) {
 }
 
 // ==========================================================================
-// Fitness Evaluation — tardiness + cost + setup + load balance (negated)
+// Evaluate solution (factors 1-5 all contribute)
 // ==========================================================================
 
 double SolverACO::evaluate(const AntSolution& sol) {
@@ -1045,7 +1096,7 @@ double SolverACO::evaluate(const AntSolution& sol) {
 }
 
 // ==========================================================================
-// Pheromone Management — init / get for per-resource transition matrices
+// Pheromone management
 // ==========================================================================
 
 void SolverACO::initPheromone(const Resource* res) {
@@ -1058,7 +1109,7 @@ const PheromoneMatrix* SolverACO::getPheromone(const Resource* res) const {
 }
 
 // ==========================================================================
-// Apply Best Solution — write ant schedule back to model via commands
+// Apply solution
 // ==========================================================================
 
 void SolverACO::applyBestSolution(const AntSolution& best) {
@@ -1112,7 +1163,7 @@ void SolverACO::applyBestSolution(const AntSolution& best) {
 }
 
 // ==========================================================================
-// Collect Operation Plans — gather all ops on a resource (helper)
+// Collect operationplans
 // ==========================================================================
 
 static void collectResourcePlans(const Resource* res,
@@ -1129,7 +1180,7 @@ static void collectResourcePlans(const Resource* res,
 }
 
 // ==========================================================================
-// Single-Resource ACO — legacy solver for one bottleneck resource
+// Single-resource ACO (legacy fallback)
 // ==========================================================================
 
 void SolverACO::solve(const Resource* res, void* v) {
@@ -1174,7 +1225,7 @@ void SolverACO::solve(const Resource* res, void* v) {
 }
 
 // ==========================================================================
-// Joint ACO Solver — runs ant colony on multiple bottleneck resources
+// Joint ACO
 // ==========================================================================
 
 void SolverACO::solveJoint(const vector<const Resource*>& resources) {
@@ -1231,7 +1282,7 @@ void SolverACO::solveJoint(const vector<const Resource*>& resources) {
 }
 
 // ==========================================================================
-// Main Entry Point — collect bottlenecks → solve joint/single → MRP propagate
+// Top-level entry
 // ==========================================================================
 
 void SolverACO::solve(void* v) {
