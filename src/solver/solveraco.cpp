@@ -677,6 +677,10 @@ AntSolution SolverACO::constructJointSolution(
       if (fl->getQuantity() >= 0.0) continue;
       Buffer* buf = fl->getBuffer();
       if (!buf) continue;
+      double requiredQty = -fl->getQuantity();
+      double currentOnHand = buf->getOnHand(Plan::instance().getCurrent(), false);
+      bool currentStockCoversDemand =
+          currentOnHand + ROUNDING_ERROR >= requiredQty;
 
       bool hasCandidateProducer = false;
       for (auto pfp = buf->getFlowPlans().begin();
@@ -687,10 +691,12 @@ AntSolution SolverACO::constructJointSolution(
 
         // Hard precedence: if the upstream producer is part of this ACO
         // candidate set, downstream operations can only be scheduled after
-        // that producer has been selected and placed by this ant.
+        // that producer has been selected and placed by this ant, unless
+        // enough semi-finished stock is already available at the current time.
         if (candidateOps.count(producer)) {
           hasCandidateProducer = true;
-          if (!scheduledOps.count(producer)) return false;
+          if (!scheduledOps.count(producer) && !currentStockCoversDemand)
+            return false;
         }
       }
 
@@ -734,6 +740,19 @@ AntSolution SolverACO::constructJointSolution(
       double waitH = upWait > Duration(0L)
           ? static_cast<double>(upWait.getSeconds()) / 3600.0 : 0.0;
       double readiness = 1.0 / (1.0 + waitH);
+      Date candidateStart = c.earliestStart;
+      for (auto* r : c.allResources) {
+        Duration setup = computeSetupTime(prevOp[r], c.op);
+        candidateStart = max(candidateStart, curTime[r] + setup);
+      }
+      candidateStart = max(
+          candidateStart, dynamicEarliestStart(c.op, materialAvailable));
+      double startWaitH = candidateStart > Plan::instance().getCurrent()
+          ? static_cast<double>(
+                (candidateStart - Plan::instance().getCurrent()).getSeconds()) /
+                3600.0
+          : 0.0;
+      double startFactor = 1.0 / (1.0 + startWaitH);
 
       double tau = 0.0;
       double eta = 0.0;
@@ -756,7 +775,8 @@ AntSolution SolverACO::constructJointSolution(
         upstreamFactor = 1.0 + 0.3 * usIt->second;
 
       double probability = pow(tau, config_.alpha) *
-          pow(max(eta * readiness * upstreamFactor, 1e-9), config_.beta);
+          pow(max(eta * readiness * upstreamFactor * startFactor, 1e-9),
+              config_.beta);
       if (probability <= 0.0) continue;
 
       readyCandidates.push_back(&c);
