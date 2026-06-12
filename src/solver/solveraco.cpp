@@ -721,14 +721,6 @@ AntSolution SolverACO::constructJointSolution(
     }
   }
 
-  // Dynamic material availability clock: tracks when each buffer receives
-  // material from operations already scheduled during this ant's construction.
-  // Initialized empty — the static earliestStart snapshot handles pre-ACO
-  // material constraints (PO arrivals, on-hand stock). As operations are
-  // placed, producing flowplans update this clock so downstream operations
-  // on other resources see the updated material timing.
-  unordered_map<const Buffer*, Date> materialAvailable;
-
   // Track unique operation plans. A single operation can have multiple
   // candidate resource assignments; once one candidate is chosen, all other
   // candidates for the same operation are implicitly excluded.
@@ -737,59 +729,95 @@ AntSolution SolverACO::constructJointSolution(
     if (c.op) candidateOps.insert(c.op);
   unordered_set<const OperationPlan*> scheduledOps;
 
-  auto isReady = [&](const OperationPlan* op) -> bool {
+  struct MaterialEvent {
+    Date date;
+    double quantity;
+  };
+  unordered_map<const Buffer*, vector<MaterialEvent>> materialLedger;
+  unordered_set<const Buffer*> initializedBuffers;
+
+  auto ensureMaterialLedger = [&](const Buffer* buf) -> void {
+    if (!buf || initializedBuffers.count(buf)) return;
+    initializedBuffers.insert(buf);
+    Date current = Plan::instance().getCurrent();
+    auto& events = materialLedger[buf];
+    double initial = buf->getOnHand(current, false);
+    if (fabs(initial) > ROUNDING_ERROR)
+      events.push_back({current, initial});
+
+    // Seed the ledger with external future events only. Old flowplans of ACO
+    // candidate operations are ignored; this ant will place those operations
+    // itself and append their consumption/production events below.
+    for (auto fp = buf->getFlowPlans().begin();
+         fp != buf->getFlowPlans().end(); ++fp) {
+      OperationPlan* fpOp = fp->getOperationPlan();
+      if (fpOp && candidateOps.count(fpOp)) continue;
+      if (fp->getDate() <= current ||
+          fp->getDate() == Date::infiniteFuture)
+        continue;
+      if (fabs(fp->getQuantity()) <= ROUNDING_ERROR) continue;
+      events.push_back({fp->getDate(), fp->getQuantity()});
+    }
+  };
+
+  auto materialBalanceAt = [&](const Buffer* buf, Date date) -> double {
+    ensureMaterialLedger(buf);
+    double balance = 0.0;
+    auto it = materialLedger.find(buf);
+    if (it == materialLedger.end()) return balance;
+    for (const auto& event : it->second)
+      if (event.date <= date) balance += event.quantity;
+    return balance;
+  };
+
+  auto materialAvailableDate =
+      [&](const Buffer* buf, double requiredQty, Date fromDate) -> Date {
+    ensureMaterialLedger(buf);
+    Date purchaseDate = purchaseMaterialAvailable(buf);
+    if (purchaseDate != Date::infiniteFuture && fromDate >= purchaseDate)
+      return fromDate;
+
+    vector<Date> dates;
+    dates.push_back(fromDate);
+    if (purchaseDate != Date::infiniteFuture && purchaseDate >= fromDate)
+      dates.push_back(purchaseDate);
+    auto it = materialLedger.find(buf);
+    if (it != materialLedger.end())
+      for (const auto& event : it->second)
+        if (event.date >= fromDate) dates.push_back(event.date);
+
+    sort(dates.begin(), dates.end());
+    dates.erase(unique(dates.begin(), dates.end()), dates.end());
+
+    for (Date date : dates) {
+      if (purchaseDate != Date::infiniteFuture && date >= purchaseDate)
+        return date;  // purchased material is unlimited from this date on
+      if (materialBalanceAt(buf, date) + ROUNDING_ERROR >= requiredQty)
+        return date;
+    }
+    return Date::infiniteFuture;
+  };
+
+  auto operationMaterialDate = [&](const OperationPlan* op, Date fromDate) {
+    Date materialDate = fromDate;
+    if (!op) return materialDate;
+    for (auto fl = op->beginFlowPlans(); fl != op->endFlowPlans(); ++fl) {
+      if (fl->getQuantity() >= 0.0) continue;
+      const Buffer* buf = fl->getBuffer();
+      if (!buf) continue;
+      Date available = materialAvailableDate(buf, -fl->getQuantity(), fromDate);
+      if (available == Date::infiniteFuture) return available;
+      if (available > materialDate) materialDate = available;
+    }
+    return materialDate;
+  };
+
+  auto isReady = [&](const OperationPlan* op, Date startCandidate) -> bool {
     if (!op) return false;
     for (auto fl = op->beginFlowPlans(); fl != op->endFlowPlans(); ++fl) {
       if (fl->getQuantity() >= 0.0) continue;
-      Buffer* buf = fl->getBuffer();
-      if (!buf) continue;
-      double requiredQty = -fl->getQuantity();
-      double currentOnHand = buf->getOnHand(Plan::instance().getCurrent(), false);
-      bool currentStockCoversDemand =
-          currentOnHand + ROUNDING_ERROR >= requiredQty;
-
-      bool hasCandidateProducer = false;
-      for (auto pfp = buf->getFlowPlans().begin();
-           pfp != buf->getFlowPlans().end(); ++pfp) {
-        if (pfp->getQuantity() <= 0.0) continue;
-        OperationPlan* producer = pfp->getOperationPlan();
-        if (!producer || producer == op) continue;
-
-        // Hard precedence: if the upstream producer is part of this ACO
-        // candidate set, downstream operations can only be scheduled after
-        // that producer has been selected and placed by this ant, unless
-        // enough semi-finished stock is already available at the current time.
-        if (candidateOps.count(producer)) {
-          hasCandidateProducer = true;
-          if (!scheduledOps.count(producer) && !currentStockCoversDemand)
-            return false;
-        }
-      }
-
-      if (hasCandidateProducer)
-        continue;
-
-      // Existing stock can satisfy this consuming flow when no ACO candidate
-      // producer still needs to be scheduled first.
-      if (buf->getOnHand(Date::infiniteFuture, false) >= -ROUNDING_ERROR)
-        continue;
-
-      // Purchased materials are considered unlimited by ACO according to the
-      // configured purchase material mode. earliestStart will enforce either
-      // immediate availability or current time plus supplier lead time.
-      if (purchaseMaterialAvailable(buf) != Date::infiniteFuture)
-        continue;
-
-      for (auto pfp = buf->getFlowPlans().begin();
-           pfp != buf->getFlowPlans().end(); ++pfp) {
-        if (pfp->getQuantity() <= 0.0) continue;
-        OperationPlan* producer = pfp->getOperationPlan();
-        if (!producer || producer == op) continue;
-
-        // External upstream supply must have a known completion date.
-        if (producer->getEnd() == Date::infiniteFuture)
-          return false;
-      }
+      if (operationMaterialDate(op, startCandidate) == Date::infiniteFuture)
+        return false;
     }
     return true;
   };
@@ -804,7 +832,6 @@ AntSolution SolverACO::constructJointSolution(
     for (auto& c : allCandidates) {
       if (!c.op || scheduledOps.count(c.op) || c.allResources.empty())
         continue;
-      if (!isReady(c.op)) continue;
 
       // Continuous readiness still helps rank candidates that depend on
       // external producers with an existing completion date.
@@ -817,8 +844,10 @@ AntSolution SolverACO::constructJointSolution(
         Duration setup = computeSetupTime(prevOp[r], c.op);
         candidateStart = max(candidateStart, curTime[r] + setup);
       }
-      candidateStart = max(
-          candidateStart, dynamicEarliestStart(c.op, materialAvailable));
+      Date materialDate = operationMaterialDate(c.op, candidateStart);
+      if (materialDate == Date::infiniteFuture) continue;
+      candidateStart = max(candidateStart, materialDate);
+      if (!isReady(c.op, candidateStart)) continue;
       double startWaitH = candidateStart > Plan::instance().getCurrent()
           ? static_cast<double>(
                 (candidateStart - Plan::instance().getCurrent()).getSeconds()) /
@@ -880,7 +909,7 @@ AntSolution SolverACO::constructJointSolution(
       Duration setup = computeSetupTime(prevOp[r], chosen.op);
       rawStart = max(rawStart, curTime[r] + setup);
     }
-    Date matEarliest = dynamicEarliestStart(chosen.op, materialAvailable);
+    Date matEarliest = operationMaterialDate(chosen.op, rawStart);
     rawStart = max(rawStart, matEarliest);
 
     const Resource* durationResource = chosen.res ? chosen.res
@@ -907,15 +936,16 @@ AntSolution SolverACO::constructJointSolution(
       curTime[r] = end;
     }
 
-    // Update material availability clock for downstream operations.
+    // Update the material ledger with the chosen operation's timed
+    // consumption and production. This prevents later operations from
+    // consuming the same on-hand or incoming stock twice.
     for (auto fp = chosen.op->beginFlowPlans();
          fp != chosen.op->endFlowPlans(); ++fp) {
-      if (fp->getQuantity() < 0.0) continue;
       const Buffer* buf = fp->getBuffer();
       if (!buf) continue;
-      auto it = materialAvailable.find(buf);
-      if (it == materialAvailable.end() || end > it->second)
-        materialAvailable[buf] = end;
+      Date eventDate = fp->getQuantity() < 0.0 ? start : end;
+      ensureMaterialLedger(buf);
+      materialLedger[buf].push_back({eventDate, fp->getQuantity()});
     }
 
     scheduledOps.insert(chosen.op);
