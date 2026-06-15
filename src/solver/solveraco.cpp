@@ -70,6 +70,28 @@ void PheromoneMatrix::deposit(const vector<OperationPlan*>& sequence,
 
 void PheromoneMatrix::reset(double /* tau0 */) { matrix_.clear(); }
 
+static double normalizedDepositAmount(
+    const ACOConfig& config,
+    const vector<AntSolution>& rankedAnts,
+    int rank,
+    double scale = 1.0) {
+  if (rank < 0 || rank >= static_cast<int>(rankedAnts.size()))
+    return config.Q * scale;
+
+  double best = rankedAnts.front().fitness;
+  double worst = rankedAnts.back().fitness;
+  double quality = fabs(best - worst) > 1e-9
+      ? (rankedAnts[rank].fitness - worst) / (best - worst)
+      : 1.0;
+  quality = max(0.0, min(1.0, quality));
+
+  double rankWeight =
+      1.0 - static_cast<double>(rank) /
+                static_cast<double>(max(1, static_cast<int>(rankedAnts.size()) - 1));
+  double amount = config.Q * scale * (0.25 + 0.50 * quality + 0.25 * rankWeight);
+  return max(config.Q * scale * 0.05, amount);
+}
+
 // ==========================================================================
 // SolverACO Python init
 // ==========================================================================
@@ -250,15 +272,26 @@ Duration estimateOperationDuration(const OperationPlan* op, const Resource* res)
     Duration dur = op->getEnd() - op->getStart();
     if (dur > Duration(0L)) return dur;
   }
-  Duration ld = Duration(0L);
+  Duration bestLoad = Duration(0L);
+  Duration maxLoad = Duration(0L);
   for (auto l = op->getOperation()->getLoads().begin();
        l != op->getOperation()->getLoads().end(); ++l) {
-    if (l->getResource() == res && l->getQuantity() > 0.0) {
-      ld = Duration(static_cast<long>(l->getQuantity() * op->getQuantity() * 3600.0));
-      if (ld > Duration(0L)) break;
+    if (l->getQuantity() <= 0.0) continue;
+    Duration loadDuration(
+        static_cast<long>(l->getQuantity() * op->getQuantity() * 3600.0));
+    if (loadDuration <= Duration(0L)) continue;
+    if (loadDuration > maxLoad) maxLoad = loadDuration;
+
+    const Resource* loadRes = l->getResource();
+    if (loadRes == res ||
+        (loadRes && loadRes->isGroup() && res && res->getTop() == loadRes) ||
+        (res && res->isGroup() && loadRes && loadRes->getTop() == res)) {
+      if (bestLoad == Duration(0L) || loadDuration > bestLoad)
+        bestLoad = loadDuration;
     }
   }
-  if (ld > Duration(0L)) return ld;
+  if (bestLoad > Duration(0L)) return bestLoad;
+  if (maxLoad > Duration(0L)) return maxLoad;
   Date fence = op->getOperation()->getFence(op);
   if (fence != Date::infiniteFuture) {
     Duration d = fence - Plan::instance().getCurrent();
@@ -322,17 +355,25 @@ Date SolverACO::earliestStart(const OperationPlan* op, const Resource* res) cons
       if (purchaseDate > earliest) earliest = purchaseDate;
       continue;
     }
-    double onhand = buf->getOnHand(Date::infiniteFuture, false);
-    if (onhand >= -ROUNDING_ERROR) continue;  // enough on hand eventually
-    // Scan flowplans for the first incoming supply
+    double runningOnhand = currentOnhand;
+    Date supplyDate = Date::infiniteFuture;
+    vector<pair<Date, double>> materialEvents;
     for (auto sfp = buf->getFlowPlans().begin();
          sfp != buf->getFlowPlans().end(); ++sfp) {
-      if (sfp->getQuantity() > 0 && sfp->getDate() > earliest) {
-        OperationPlan* supplier = sfp->getOperationPlan();
-        if (supplier && supplier->getEnd() > earliest)
-          earliest = supplier->getEnd();
+      if (sfp->getOperationPlan() == op) continue;
+      if (sfp->getDate() < Plan::instance().getCurrent()) continue;
+      materialEvents.push_back({sfp->getDate(), sfp->getQuantity()});
+    }
+    sort(materialEvents.begin(), materialEvents.end(),
+         [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (const auto& event : materialEvents) {
+      runningOnhand += event.second;
+      if (runningOnhand >= -ROUNDING_ERROR) {
+        supplyDate = event.first;
+        break;
       }
     }
+    if (supplyDate > earliest) earliest = supplyDate;
   }
 
   // Factor 4: Upstream dependency — also check isUpstreamBlocked
@@ -1310,26 +1351,69 @@ void SolverACO::compactSchedule(
     prevOp[r] = nullptr;
   }
 
+  auto computeJointRange = [&](OperationPlan* op,
+                               const vector<const Resource*>& resList,
+                               Date rawStart) {
+    Duration dur = Duration(0L);
+    for (auto* r : resList) {
+      Duration resDur = estimateOperationDuration(op, r);
+      if (resDur > dur) dur = resDur;
+    }
+    if (dur <= Duration(0L)) dur = Duration(3600L);
+
+    Date start = rawStart;
+    Date end = rawStart + dur;
+    for (int pass = 0; pass < 3; ++pass) {
+      Date nextStart = start;
+      Date nextEnd = end;
+      for (auto* r : resList) {
+        DateRange range;
+        if (op->getOperation())
+          range = op->getOperation()->calculateOperationTime(
+              op, start, dur, true);
+        else
+          range = DateRange(start, start + dur);
+
+        if (r) {
+          Date resourceEnd = start + dur;
+          if (r->getAvailable() ||
+              (r->getLocation() && r->getLocation()->getAvailable())) {
+            Duration available = r->getAvailable(start, range.getEnd());
+            int guard = 0;
+            while (available < dur && guard++ < 5) {
+              resourceEnd = range.getEnd() + Duration(dur - available);
+              available = r->getAvailable(start, resourceEnd);
+            }
+            if (resourceEnd > range.getEnd()) range.setEnd(resourceEnd);
+          }
+        }
+
+        if (range.getStart() > nextStart) nextStart = range.getStart();
+        if (range.getEnd() > nextEnd) nextEnd = range.getEnd();
+      }
+      if (nextStart == start && nextEnd == end) break;
+      start = nextStart;
+      end = nextEnd;
+    }
+    return DateRange(start, end);
+  };
+
   // Replay operations in current order, but compacted
   for (auto& e : allOps) {
     // Compute earliest feasible start across all required resources
     Date rawStart = earliestStart(e.op, e.resList[0]);
     for (auto* r : e.resList) {
+      Date resStart = earliestStart(e.op, r);
+      if (resStart > rawStart) rawStart = resStart;
+    }
+    for (auto* r : e.resList) {
       Duration setup = computeSetupTime(prevOp[r], e.op);
       rawStart = max(rawStart, curTime[r] + setup);
     }
 
-    Duration dur = estimateOperationDuration(e.op, e.resList[0]);
-    Date start, end;
-    if (e.op->getOperation()) {
-      DateRange range = e.op->getOperation()->calculateOperationTime(
-          e.op, rawStart, dur, true);
-      start = range.getStart();
-      end = range.getEnd();
-    } else {
-      start = rawStart;
-      end = rawStart + dur;
-    }
+    DateRange range = computeJointRange(e.op, e.resList, rawStart);
+    Date start = range.getStart();
+    Date end = range.getEnd();
 
     // Commit to all resources
     for (auto* r : e.resList) {
@@ -1655,10 +1739,11 @@ void SolverACO::solve(const Resource* res, void* v) {
     else ++stag;
 
     phero.evaporate(config_.evaporation);
-    phero.deposit(best.sequences[res], config_.Q * (1.0 + max(0.0, best.fitness) * 0.01));
+    phero.deposit(best.sequences[res],
+                  normalizedDepositAmount(config_, ants, 0, 1.25));
     for (int e = 0; e < config_.elite_ants && e < config_.ants; ++e)
       phero.deposit(ants[e].sequences[res],
-                    config_.Q * 0.5 * (1.0 + max(0.0, ants[e].fitness) * 0.01));
+                    normalizedDepositAmount(config_, ants, e, 0.5));
 
     if (stag >= config_.stagnation_limit) {
       if (getLogLevel() > 1)
@@ -1709,11 +1794,11 @@ void SolverACO::solveJoint(const vector<const Resource*>& resources) {
     for (auto* r : resources) pheromones_[r].evaporate(config_.evaporation);
     for (auto& kv : best.sequences)
       pheromones_[kv.first].deposit(kv.second,
-          config_.Q * (1.0 + max(0.0, best.fitness) * 0.01));
+          normalizedDepositAmount(config_, ants, 0, 1.25));
     for (int e = 0; e < config_.elite_ants && e < config_.ants; ++e)
       for (auto& kv : ants[e].sequences)
         pheromones_[kv.first].deposit(kv.second,
-            config_.Q * 0.5 * (1.0 + max(0.0, ants[e].fitness) * 0.01));
+            normalizedDepositAmount(config_, ants, e, 0.5));
 
     if (stag >= config_.stagnation_limit) {
       if (getLogLevel() > 1)
