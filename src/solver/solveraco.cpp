@@ -1399,8 +1399,52 @@ double SolverACO::evaluate(const AntSolution& sol) {
   const double MATERIAL_PENALTY = 1000.0;  // heavy penalty for violating material constraint
   const double UNSCHEDULED_PENALTY = 1.0e6;
 
-  // Track seen operations to avoid double-counting multi-resource ops
-  unordered_set<const OperationPlan*> seen;
+  auto priorityFactorFor = [&](const OperationPlan* op) {
+    Demand* dmd = op->getTopOwner()->getDemand();
+    int dmdPrio = dmd ? dmd->getPriority() : 999;
+    return 1.0 + config_.weight_priority /
+                     (1.0 + static_cast<double>(dmdPrio));
+  };
+
+  auto resourceSetupTime = [&](const OperationPlan* from,
+                               const OperationPlan* to,
+                               const Resource* res) {
+    if (!from || !to || !res) return Duration(0L);
+    if (from->getOperation() == to->getOperation()) return Duration(0L);
+
+    PooledString fromSetup, toSetup;
+    const SetupMatrix* matrix = res->getSetupMatrix();
+    for (auto fl = from->beginLoadPlans(); fl != from->endLoadPlans(); ++fl) {
+      if (!fl->isStart()) continue;
+      Resource* lpRes = fl->getResource();
+      if (lpRes == res || (lpRes && lpRes->getTop() == res) ||
+          res->getTop() == lpRes) {
+        fromSetup = fl->getSetupLoad();
+        if (!matrix && lpRes) matrix = lpRes->getSetupMatrix();
+        break;
+      }
+    }
+    for (auto tl = to->beginLoadPlans(); tl != to->endLoadPlans(); ++tl) {
+      if (!tl->isStart()) continue;
+      Resource* lpRes = tl->getResource();
+      if (lpRes == res || (lpRes && lpRes->getTop() == res) ||
+          res->getTop() == lpRes) {
+        toSetup = tl->getSetupLoad();
+        if (!matrix && lpRes) matrix = lpRes->getSetupMatrix();
+        break;
+      }
+    }
+
+    if (fromSetup.empty() && toSetup.empty()) return Duration(0L);
+    if (!matrix) return computeSetupTime(from, to);
+    SetupMatrixRule* rule = matrix->calculateSetup(fromSetup, toSetup);
+    return rule ? rule->getDuration() : Duration(0L);
+  };
+
+  // Operation-level metrics are counted once, resource-level metrics are
+  // counted for every occupied resource in multi-resource operations.
+  unordered_set<const OperationPlan*> costedOps;
+  unordered_map<const OperationPlan*, Date> latestEndByOp;
 
   for (const auto& kv : sol.sequences) {
     const Resource* res = kv.first;
@@ -1412,41 +1456,45 @@ double SolverACO::evaluate(const AntSolution& sol) {
     for (size_t i = 0; i < seq.size(); ++i) {
       const OperationPlan* op = seq[i];
 
-      // Deduplicate: multi-resource ops appear on every resource they occupy
-      if (seen.count(op)) { prev = op; continue; }
-      seen.insert(op);
-
-      // Compute priority factor: lower priority number = higher importance.
-      // dmdPrio=0 → factor≈11x, dmdPrio=999 → factor≈1.0x
-      Demand* dmd = op->getTopOwner()->getDemand();
-      int dmdPrio = dmd ? dmd->getPriority() : 999;
-      double priorityFactor = 1.0
-          + config_.weight_priority / (1.0 + static_cast<double>(dmdPrio));
+      double priorityFactor = priorityFactorFor(op);
 
       // Factor 5: Material penalty if starting before material is available
       Date matAvail = earliestStart(op, res);
       if (starts[i] < matAvail)
         tardiness += MATERIAL_PENALTY * priorityFactor;
 
-      // Factor 3: Due date tardiness (priority-weighted)
-      if (dmd && dmd->getDue() != Date::infiniteFuture && ends[i] > dmd->getDue())
-        tardiness += static_cast<double>(
-            (ends[i] - dmd->getDue()).getSeconds()) / 3600.0 * priorityFactor;
-
-      // Factor: Operation cost (operation base + resource hourly)
-      cost += op->getOperation()->getCost() * op->getQuantity();
-      // Add resource usage cost per hour for the actual scheduled duration
+      // Resource usage cost is charged for every occupied resource.
       Duration dur = ends[i] - starts[i];
       if (dur > Duration(0L))
         cost += res->getCost() *
             static_cast<double>(dur.getSeconds()) / 3600.0;
 
-      // Factor 2: Setup time
+      // Factor 2: Setup time on this resource sequence.
       if (prev)
         setup += static_cast<double>(
-            computeSetupTime(prev, op).getSeconds()) / 3600.0;
+            resourceSetupTime(prev, op, res).getSeconds()) / 3600.0;
+
+      // Operation base cost and due-date tardiness are operation-level.
+      if (!costedOps.count(op)) {
+        cost += op->getOperation()->getCost() * op->getQuantity();
+        costedOps.insert(op);
+      }
+      auto endIt = latestEndByOp.find(op);
+      if (endIt == latestEndByOp.end() || ends[i] > endIt->second)
+        latestEndByOp[op] = ends[i];
 
       prev = op;
+    }
+  }
+
+  for (const auto& kv : latestEndByOp) {
+    const OperationPlan* op = kv.first;
+    Demand* dmd = op->getTopOwner()->getDemand();
+    if (dmd && dmd->getDue() != Date::infiniteFuture &&
+        kv.second > dmd->getDue()) {
+      tardiness += static_cast<double>(
+          (kv.second - dmd->getDue()).getSeconds()) / 3600.0 *
+          priorityFactorFor(op);
     }
   }
 
