@@ -25,7 +25,6 @@
 
 #include <algorithm>
 #include <cfloat>
-#include <tuple>
 #include <unordered_set>
 
 #include "ccAPPS/solveraco.h"
@@ -69,28 +68,6 @@ void PheromoneMatrix::deposit(const vector<OperationPlan*>& sequence,
 }
 
 void PheromoneMatrix::reset(double /* tau0 */) { matrix_.clear(); }
-
-static double normalizedDepositAmount(
-    const ACOConfig& config,
-    const vector<AntSolution>& rankedAnts,
-    int rank,
-    double scale = 1.0) {
-  if (rank < 0 || rank >= static_cast<int>(rankedAnts.size()))
-    return config.Q * scale;
-
-  double best = rankedAnts.front().fitness;
-  double worst = rankedAnts.back().fitness;
-  double quality = fabs(best - worst) > 1e-9
-      ? (rankedAnts[rank].fitness - worst) / (best - worst)
-      : 1.0;
-  quality = max(0.0, min(1.0, quality));
-
-  double rankWeight =
-      1.0 - static_cast<double>(rank) /
-                static_cast<double>(max(1, static_cast<int>(rankedAnts.size()) - 1));
-  double amount = config.Q * scale * (0.25 + 0.50 * quality + 0.25 * rankWeight);
-  return max(config.Q * scale * 0.05, amount);
-}
 
 // ==========================================================================
 // SolverACO Python init
@@ -272,26 +249,15 @@ Duration estimateOperationDuration(const OperationPlan* op, const Resource* res)
     Duration dur = op->getEnd() - op->getStart();
     if (dur > Duration(0L)) return dur;
   }
-  Duration bestLoad = Duration(0L);
-  Duration maxLoad = Duration(0L);
+  Duration ld = Duration(0L);
   for (auto l = op->getOperation()->getLoads().begin();
        l != op->getOperation()->getLoads().end(); ++l) {
-    if (l->getQuantity() <= 0.0) continue;
-    Duration loadDuration(
-        static_cast<long>(l->getQuantity() * op->getQuantity() * 3600.0));
-    if (loadDuration <= Duration(0L)) continue;
-    if (loadDuration > maxLoad) maxLoad = loadDuration;
-
-    const Resource* loadRes = l->getResource();
-    if (loadRes == res ||
-        (loadRes && loadRes->isGroup() && res && res->getTop() == loadRes) ||
-        (res && res->isGroup() && loadRes && loadRes->getTop() == res)) {
-      if (bestLoad == Duration(0L) || loadDuration > bestLoad)
-        bestLoad = loadDuration;
+    if (l->getResource() == res && l->getQuantity() > 0.0) {
+      ld = Duration(static_cast<long>(l->getQuantity() * op->getQuantity() * 3600.0));
+      if (ld > Duration(0L)) break;
     }
   }
-  if (bestLoad > Duration(0L)) return bestLoad;
-  if (maxLoad > Duration(0L)) return maxLoad;
+  if (ld > Duration(0L)) return ld;
   Date fence = op->getOperation()->getFence(op);
   if (fence != Date::infiniteFuture) {
     Duration d = fence - Plan::instance().getCurrent();
@@ -355,25 +321,17 @@ Date SolverACO::earliestStart(const OperationPlan* op, const Resource* res) cons
       if (purchaseDate > earliest) earliest = purchaseDate;
       continue;
     }
-    double runningOnhand = currentOnhand;
-    Date supplyDate = Date::infiniteFuture;
-    vector<pair<Date, double>> materialEvents;
+    double onhand = buf->getOnHand(Date::infiniteFuture, false);
+    if (onhand >= -ROUNDING_ERROR) continue;  // enough on hand eventually
+    // Scan flowplans for the first incoming supply
     for (auto sfp = buf->getFlowPlans().begin();
          sfp != buf->getFlowPlans().end(); ++sfp) {
-      if (sfp->getOperationPlan() == op) continue;
-      if (sfp->getDate() < Plan::instance().getCurrent()) continue;
-      materialEvents.push_back({sfp->getDate(), sfp->getQuantity()});
-    }
-    sort(materialEvents.begin(), materialEvents.end(),
-         [](const auto& a, const auto& b) { return a.first < b.first; });
-    for (const auto& event : materialEvents) {
-      runningOnhand += event.second;
-      if (runningOnhand >= -ROUNDING_ERROR) {
-        supplyDate = event.first;
-        break;
+      if (sfp->getQuantity() > 0 && sfp->getDate() > earliest) {
+        OperationPlan* supplier = sfp->getOperationPlan();
+        if (supplier && supplier->getEnd() > earliest)
+          earliest = supplier->getEnd();
       }
     }
-    if (supplyDate > earliest) earliest = supplyDate;
   }
 
   // Factor 4: Upstream dependency — also check isUpstreamBlocked
@@ -530,29 +488,6 @@ vector<CandidateOp> SolverACO::buildCandidates(
   unordered_set<OperationPlan*> processed;
   int nextId = 0;
 
-  auto resourceHasSkill = [](const Resource* res, Skill* requiredSkill) {
-    if (!requiredSkill) return true;
-    for (auto rs = res->getSkills();; ++rs) {
-      const ResourceSkill* rsk = &*rs;
-      if (!rsk) break;
-      if (rsk->getSkill() == requiredSkill) return true;
-    }
-    return false;
-  };
-
-  function<void(const Resource*, Skill*, vector<const Resource*>&)>
-      expandResourceAlternatives =
-          [&](const Resource* res, Skill* requiredSkill,
-              vector<const Resource*>& out) {
-            if (!res || !res->getConstrained()) return;
-            if (!res->isGroup()) {
-              if (resourceHasSkill(res, requiredSkill)) out.push_back(res);
-              return;
-            }
-            for (auto m = res->getMembers(); m != Resource::end(); ++m)
-              expandResourceAlternatives(&*m, requiredSkill, out);
-          };
-
   for (auto* res : resources) {
     auto loadplans = res->getLoadPlans();
     for (auto it = loadplans.begin(); it != loadplans.end(); ++it) {
@@ -566,165 +501,83 @@ vector<CandidateOp> SolverACO::buildCandidates(
       if (processed.count(op)) continue;
       processed.insert(op);
 
-      struct AlternativeGroup {
-        const Load* load = nullptr;
-        vector<const Resource*> choices;
-      };
-
-      // Split constrained loads into:
-      // 1. fixedResources: resources always required simultaneously
-      // 2. alternativeGroups: one selection must be made from each group
-      vector<const Resource*> fixedResources;
-      vector<pair<const Load*, const Resource*>> fixedAssignments;
-      vector<AlternativeGroup> alternativeGroups;
+      // Collect all constrained resources this operation could run on.
+      // Expand resource groups into individual child resources so ACO can
+      // choose the best machine within a pool.
+      unordered_set<const Resource*> altResources;
       for (const auto& ld : op->getOperation()->getLoads()) {
         const Resource* ldRes = ld.getResource();
         if (!ldRes || !ldRes->getConstrained()) continue;
 
         if (ldRes->isGroup()) {
-          vector<const Resource*> choices;
-          expandResourceAlternatives(ldRes, ld.getSkill(), choices);
-          sort(choices.begin(), choices.end());
-          choices.erase(unique(choices.begin(), choices.end()), choices.end());
-          if (!choices.empty())
-            alternativeGroups.push_back(AlternativeGroup{&ld, move(choices)});
-        } else {
-          if (resourceHasSkill(ldRes, ld.getSkill())) {
-            fixedResources.push_back(ldRes);
-            fixedAssignments.push_back({&ld, ldRes});
+          // Expand resource group up to 3 levels to find individual machines
+          for (auto m1 = ldRes->getMembers(); m1 != Resource::end(); ++m1) {
+            if (m1->isGroup()) {
+              for (auto m2 = m1->getMembers(); m2 != Resource::end(); ++m2) {
+                if (m2->isGroup()) {
+                  for (auto m3 = m2->getMembers(); m3 != Resource::end(); ++m3)
+                    altResources.insert(&*m3);
+                } else {
+                  altResources.insert(&*m2);
+                }
+              }
+            } else {
+              altResources.insert(&*m1);
+            }
           }
+        } else {
+          altResources.insert(ldRes);
         }
       }
 
-      sort(fixedResources.begin(), fixedResources.end());
-      fixedResources.erase(unique(fixedResources.begin(), fixedResources.end()),
-                           fixedResources.end());
-
-      set<vector<const Resource*>> emittedResourceSets;
-      auto emitCandidate = [&](vector<const Resource*> occupiedResources,
-                               const Resource* preferredPrimary,
-                               vector<pair<const Load*, const Resource*>> loadAssignments) {
-        if (occupiedResources.empty()) return;
-        sort(occupiedResources.begin(), occupiedResources.end());
-        occupiedResources.erase(
-            unique(occupiedResources.begin(), occupiedResources.end()),
-            occupiedResources.end());
-        if (!emittedResourceSets.insert(occupiedResources).second) return;
-
-        CandidateOp c;
-        c.op = op;
-        c.allResources = occupiedResources;
-        c.loadAssignments = move(loadAssignments);
-        c.res = preferredPrimary;
-        if (!c.res ||
-            find(c.allResources.begin(), c.allResources.end(), c.res) ==
-                c.allResources.end())
-          c.res = c.allResources.front();
-        Date eStart = Plan::instance().getCurrent();
-        for (auto* rsrc : c.allResources) {
-          Date rStart = earliestStart(op, rsrc);
-          if (rStart > eStart) eStart = rStart;
+      // Separate machines from operators (group members).
+      // Generate one candidate per operator so each has a fair chance.
+      if (!altResources.empty()) {
+        vector<const Resource*> machines, operators;
+        for (auto* r : altResources) {
+          // A resource is an operator if it has a parent (owner)
+          if (r->getOwner() && r->getOwner() != r) operators.push_back(r);
+          else machines.push_back(r);
         }
-        c.earliestStart = eStart;
-        c.candId = nextId;
-        candidates.push_back(c);
-      };
-
-      if (!alternativeGroups.empty()) {
-        struct PartialCandidate {
-          vector<const Resource*> selected;
-          vector<pair<const Load*, const Resource*>> loadAssignments;
-          const Resource* primary = nullptr;
-          Date earliest = Plan::instance().getCurrent();
-          double cost = 0.0;
-        };
-
-        const int maxBeamWidth =
-            max(1, config_.max_candidate_combinations_per_op);
-        const int minBeamWidth = min(
-            maxBeamWidth,
-            max(4, static_cast<int>(sqrt(static_cast<double>(maxBeamWidth)))));
-        vector<PartialCandidate> partials(1);
-        partials[0].primary =
-            find(fixedResources.begin(), fixedResources.end(), res) !=
-                    fixedResources.end()
-                ? res
-                : nullptr;
-        partials[0].loadAssignments = fixedAssignments;
-        for (auto* fixed : fixedResources) {
-          partials[0].earliest = max(partials[0].earliest, earliestStart(op, fixed));
-          partials[0].cost += fixed->getCost();
-        }
-
-        for (size_t groupIdx = 0; groupIdx < alternativeGroups.size(); ++groupIdx) {
-          const auto& group = alternativeGroups[groupIdx];
-          vector<PartialCandidate> expanded;
-          expanded.reserve(partials.size() * group.choices.size());
-          for (const auto& partial : partials) {
-            for (auto* choice : group.choices) {
-              PartialCandidate next = partial;
-              next.selected.push_back(choice);
-              next.loadAssignments.push_back({group.load, choice});
-              next.earliest = max(next.earliest, earliestStart(op, choice));
-              next.cost += choice->getCost();
-              if (!next.primary || choice == res) next.primary = choice;
-              expanded.push_back(move(next));
+        if (!operators.empty()) {
+          for (auto* oper : operators) {
+            CandidateOp c;
+            c.op = op;
+            c.allResources = machines;
+            c.allResources.push_back(oper);
+            c.res = oper;
+            Date eStart = Plan::instance().getCurrent();
+            for (auto* r : c.allResources) {
+              Date rStart = earliestStart(op, r);
+              if (rStart > eStart) eStart = rStart;
             }
+            c.earliestStart = eStart;
+            c.candId = nextId++;
+            candidates.push_back(c);
           }
-
-          sort(expanded.begin(), expanded.end(),
-               [&](const PartialCandidate& a, const PartialCandidate& b) {
-                 const bool preferA = a.primary == res;
-                 const bool preferB = b.primary == res;
-                 if (a.earliest != b.earliest) return a.earliest < b.earliest;
-                 if (a.cost != b.cost) return a.cost < b.cost;
-                 if (preferA != preferB) return preferA > preferB;
-                 return a.selected < b.selected;
-               });
-
-          size_t downstreamExpansion = 1;
-          for (size_t futureIdx = groupIdx + 1;
-               futureIdx < alternativeGroups.size();
-               ++futureIdx) {
-            downstreamExpansion *= alternativeGroups[futureIdx].choices.size();
-            if (downstreamExpansion >= static_cast<size_t>(maxBeamWidth)) {
-              downstreamExpansion = static_cast<size_t>(maxBeamWidth);
-              break;
-            }
+          processed.insert(op); continue; // skip outer ++nextId
+        } else {
+          CandidateOp c;
+          c.op = op;
+          c.allResources = machines;
+          c.res = c.allResources[0];
+          Date eStart = Plan::instance().getCurrent();
+          for (auto* r : c.allResources) {
+            Date rStart = earliestStart(op, r);
+            if (rStart > eStart) eStart = rStart;
           }
-
-          int layerBeamWidth = maxBeamWidth;
-          if (downstreamExpansion > 1) {
-            layerBeamWidth = static_cast<int>(
-                (maxBeamWidth + downstreamExpansion - 1) / downstreamExpansion);
-            layerBeamWidth = max(minBeamWidth, layerBeamWidth);
-          }
-          layerBeamWidth = min(layerBeamWidth, maxBeamWidth);
-          if (static_cast<int>(expanded.size()) > layerBeamWidth)
-            expanded.resize(layerBeamWidth);
-          partials = move(expanded);
-          if (partials.empty()) break;
-        }
-
-        for (auto& partial : partials) {
-          vector<const Resource*> occupiedResources = fixedResources;
-          occupiedResources.insert(occupiedResources.end(),
-                                   partial.selected.begin(),
-                                   partial.selected.end());
-          const Resource* primary = partial.primary;
-          if (!primary && !partial.selected.empty()) primary = partial.selected.front();
-          if (!primary && !fixedResources.empty()) primary = fixedResources.front();
-          emitCandidate(move(occupiedResources), primary,
-                        move(partial.loadAssignments));
+          c.earliestStart = eStart;
+          c.candId = nextId;
+          candidates.push_back(c);
         }
       } else {
-        if (fixedResources.empty()) fixedResources.push_back(res);
-        const Resource* primary =
-            find(fixedResources.begin(), fixedResources.end(), res) !=
-                    fixedResources.end()
-                ? res
-                : fixedResources.front();
-        emitCandidate(fixedResources, primary, fixedAssignments);
+        CandidateOp c;
+        c.op = op;
+        c.res = res;
+        c.allResources.push_back(res);
+        c.earliestStart = earliestStart(op, res);
+        c.candId = nextId;
+        candidates.push_back(c);
       }
       ++nextId;
     }
@@ -971,150 +824,6 @@ AntSolution SolverACO::constructJointSolution(
 
   // Total remaining unique operations.
   size_t remaining = candidateOps.size();
-
-  auto pickRepresentativeCandidate = [&](const OperationPlan* op)
-      -> const CandidateOp* {
-    const CandidateOp* best = nullptr;
-    Date bestStart = Date::infiniteFuture;
-    int bestPriority = numeric_limits<int>::max();
-    Date bestDue = Date::infiniteFuture;
-
-    for (const auto& cand : allCandidates) {
-      if (cand.op != op || cand.allResources.empty()) continue;
-      Demand* dmd = cand.op->getTopOwner()->getDemand();
-      int prio = dmd ? dmd->getPriority() : numeric_limits<int>::max();
-      Date due = (dmd && dmd->getDue() != Date::infiniteFuture)
-                     ? dmd->getDue()
-                     : Date::infiniteFuture;
-      if (!best || cand.earliestStart < bestStart ||
-          (cand.earliestStart == bestStart && prio < bestPriority) ||
-          (cand.earliestStart == bestStart && prio == bestPriority &&
-           due < bestDue)) {
-        best = &cand;
-        bestStart = cand.earliestStart;
-        bestPriority = prio;
-        bestDue = due;
-      }
-    }
-    return best;
-  };
-
-  auto appendScheduledOperation = [&](const CandidateOp& chosen, Date start,
-                                      Date end) {
-    ant.selectedResources[chosen.op] = chosen.allResources;
-    ant.selectedLoadAssignments[chosen.op] = chosen.loadAssignments;
-    for (auto* r : chosen.allResources) {
-      ant.sequences[r].push_back(chosen.op);
-      ant.startDates[r].push_back(start);
-      ant.endDates[r].push_back(end);
-      prevOp[r] = chosen.op;
-      curTime[r] = end;
-    }
-
-    for (auto fp = chosen.op->beginFlowPlans(); fp != chosen.op->endFlowPlans();
-         ++fp) {
-      const Buffer* buf = fp->getBuffer();
-      if (!buf) continue;
-      Date eventDate = fp->getQuantity() < 0.0 ? start : end;
-      ensureMaterialLedger(buf);
-      materialLedger[buf].push_back({eventDate, fp->getQuantity()});
-    }
-  };
-
-  auto forceScheduleRemaining = [&]() {
-    vector<const CandidateOp*> leftovers;
-    unordered_set<const OperationPlan*> emitted;
-    leftovers.reserve(candidateOps.size());
-
-    for (const auto& cand : allCandidates) {
-      if (!cand.op || scheduledOps.count(cand.op) || cand.allResources.empty())
-        continue;
-      if (emitted.count(cand.op)) continue;
-      const CandidateOp* rep = pickRepresentativeCandidate(cand.op);
-      if (!rep) continue;
-      leftovers.push_back(rep);
-      emitted.insert(cand.op);
-    }
-
-    sort(leftovers.begin(), leftovers.end(),
-         [](const CandidateOp* a, const CandidateOp* b) {
-           Demand* da = a && a->op ? a->op->getTopOwner()->getDemand() : nullptr;
-           Demand* db = b && b->op ? b->op->getTopOwner()->getDemand() : nullptr;
-           Date dueA =
-               (da && da->getDue() != Date::infiniteFuture) ? da->getDue()
-                                                            : Date::infiniteFuture;
-           Date dueB =
-               (db && db->getDue() != Date::infiniteFuture) ? db->getDue()
-                                                            : Date::infiniteFuture;
-           if (dueA != dueB) return dueA < dueB;
-
-           int prioA = da ? da->getPriority() : numeric_limits<int>::max();
-           int prioB = db ? db->getPriority() : numeric_limits<int>::max();
-           if (prioA != prioB) return prioA < prioB;
-
-           if (a->earliestStart != b->earliestStart)
-             return a->earliestStart < b->earliestStart;
-
-           return a->candId < b->candId;
-         });
-
-    for (const CandidateOp* forced : leftovers) {
-      if (!forced || !forced->op || scheduledOps.count(forced->op)) continue;
-
-      Date rawStart = forced->earliestStart;
-      for (auto* r : forced->allResources) {
-        Duration setup = computeSetupTime(prevOp[r], forced->op);
-        rawStart = max(rawStart, curTime[r] + setup);
-      }
-      Date matEarliest = operationMaterialDate(forced->op, rawStart);
-      if (matEarliest != Date::infiniteFuture) rawStart = max(rawStart, matEarliest);
-
-      const Resource* durationResource =
-          forced->res ? forced->res : forced->allResources.front();
-      Duration dur = estimateOperationDuration(forced->op, durationResource);
-      Date start, end;
-      if (forced->op->getOperation()) {
-        DateRange range = forced->op->getOperation()->calculateOperationTime(
-            forced->op, rawStart, dur, true);
-        start = range.getStart();
-        end = range.getEnd();
-      } else {
-        start = rawStart;
-        end = rawStart + dur;
-      }
-
-      appendScheduledOperation(*forced, start, end);
-      scheduledOps.insert(forced->op);
-      if (remaining > 0) --remaining;
-    }
-
-    ant.unscheduledPenalty = 0.0;
-    for (const auto& cand : allCandidates) {
-      if (!cand.op || scheduledOps.count(cand.op)) continue;
-      Demand* dmd = cand.op->getTopOwner()->getDemand();
-      int dmdPrio = dmd ? dmd->getPriority() : 999;
-      double priorityFactor =
-          1.0 + config_.weight_priority /
-                    (1.0 + static_cast<double>(dmdPrio));
-
-      double dueFactor = 1.0;
-      if (dmd && dmd->getDue() != Date::infiniteFuture) {
-        auto slackDays = static_cast<double>(
-                             (dmd->getDue() - Plan::instance().getCurrent())
-                                 .getSeconds()) /
-                         86400.0;
-        if (slackDays <= 0.0)
-          dueFactor = 5.0;
-        else
-          dueFactor = max(1.0, 10.0 / (1.0 + slackDays));
-      }
-
-      ant.unscheduledPenalty += priorityFactor * dueFactor;
-      scheduledOps.insert(cand.op);
-    }
-    ant.unscheduledCount = remaining;
-  };
-
   while (remaining > 0) {
     vector<const CandidateOp*> readyCandidates;
     vector<double> probs;
@@ -1176,13 +885,8 @@ AntSolution SolverACO::constructJointSolution(
       total += probability;
     }
 
-    if (readyCandidates.empty() || total <= 0.0) {
-      // Fallback: force-schedule the remaining operations so ants always
-      // return a complete-or-nearly-complete solution instead of stopping
-      // with a high-scoring partial schedule.
-      forceScheduleRemaining();
-      break;
-    }
+    if (readyCandidates.empty() || total <= 0.0)
+      break;  // Remaining operations are blocked by unscheduled upstream work.
 
     // Roulette selection over ready operation candidates. This makes the
     // operation choose its resource assignment, instead of a resource choosing
@@ -1222,14 +926,32 @@ AntSolution SolverACO::constructJointSolution(
       end = rawStart + dur;
     }
 
-    appendScheduledOperation(chosen, start, end);
+    // Write to ALL resources this operation occupies.
+    for (auto* r : chosen.allResources) {
+      ant.sequences[r].push_back(chosen.op);
+      ant.startDates[r].push_back(start);
+      ant.endDates[r].push_back(end);
+    ant.selectedResources[chosen.op] = chosen.allResources;
+    ant.selectedLoadAssignments[chosen.op] = chosen.loadAssignments;
+      prevOp[r] = chosen.op;
+      curTime[r] = end;
+    }
+
+    // Update the material ledger with the chosen operation's timed
+    // consumption and production. This prevents later operations from
+    // consuming the same on-hand or incoming stock twice.
+    for (auto fp = chosen.op->beginFlowPlans();
+         fp != chosen.op->endFlowPlans(); ++fp) {
+      const Buffer* buf = fp->getBuffer();
+      if (!buf) continue;
+      Date eventDate = fp->getQuantity() < 0.0 ? start : end;
+      ensureMaterialLedger(buf);
+      materialLedger[buf].push_back({eventDate, fp->getQuantity()});
+    }
 
     scheduledOps.insert(chosen.op);
     --remaining;
   }
-
-  ant.unscheduledCount = remaining;
-  if (remaining == 0) ant.unscheduledPenalty = 0.0;
 
   return ant;
 }
@@ -1312,19 +1034,7 @@ void SolverACO::compactSchedule(
       seen.insert(seq[i]);
       OpEntry e;
       e.op = seq[i];
-      for (auto* r2 : resources) {
-        auto seqIt = ant.sequences.find(r2);
-        if (seqIt == ant.sequences.end()) continue;
-        for (auto* scheduledOp : seqIt->second) {
-          if (scheduledOp == seq[i]) {
-            e.resList.push_back(r2);
-            break;
-          }
-        }
-      }
-      sort(e.resList.begin(), e.resList.end());
-      e.resList.erase(unique(e.resList.begin(), e.resList.end()),
-                      e.resList.end());
+      e.resList = getConstrainedResources(seq[i]);
       if (e.resList.empty()) e.resList.push_back(r);
       e.start = starts[i];
       e.end = ends[i];
@@ -1351,69 +1061,26 @@ void SolverACO::compactSchedule(
     prevOp[r] = nullptr;
   }
 
-  auto computeJointRange = [&](OperationPlan* op,
-                               const vector<const Resource*>& resList,
-                               Date rawStart) {
-    Duration dur = Duration(0L);
-    for (auto* r : resList) {
-      Duration resDur = estimateOperationDuration(op, r);
-      if (resDur > dur) dur = resDur;
-    }
-    if (dur <= Duration(0L)) dur = Duration(3600L);
-
-    Date start = rawStart;
-    Date end = rawStart + dur;
-    for (int pass = 0; pass < 3; ++pass) {
-      Date nextStart = start;
-      Date nextEnd = end;
-      for (auto* r : resList) {
-        DateRange range;
-        if (op->getOperation())
-          range = op->getOperation()->calculateOperationTime(
-              op, start, dur, true);
-        else
-          range = DateRange(start, start + dur);
-
-        if (r) {
-          Date resourceEnd = start + dur;
-          if (r->getAvailable() ||
-              (r->getLocation() && r->getLocation()->getAvailable())) {
-            Duration available = r->getAvailable(start, range.getEnd());
-            int guard = 0;
-            while (available < dur && guard++ < 5) {
-              resourceEnd = range.getEnd() + Duration(dur - available);
-              available = r->getAvailable(start, resourceEnd);
-            }
-            if (resourceEnd > range.getEnd()) range.setEnd(resourceEnd);
-          }
-        }
-
-        if (range.getStart() > nextStart) nextStart = range.getStart();
-        if (range.getEnd() > nextEnd) nextEnd = range.getEnd();
-      }
-      if (nextStart == start && nextEnd == end) break;
-      start = nextStart;
-      end = nextEnd;
-    }
-    return DateRange(start, end);
-  };
-
   // Replay operations in current order, but compacted
   for (auto& e : allOps) {
     // Compute earliest feasible start across all required resources
     Date rawStart = earliestStart(e.op, e.resList[0]);
     for (auto* r : e.resList) {
-      Date resStart = earliestStart(e.op, r);
-      if (resStart > rawStart) rawStart = resStart;
-    }
-    for (auto* r : e.resList) {
       Duration setup = computeSetupTime(prevOp[r], e.op);
       rawStart = max(rawStart, curTime[r] + setup);
     }
 
-    DateRange range = computeJointRange(e.op, e.resList, rawStart);
-    Date start = range.getStart();
-    Date end = range.getEnd();
+    Duration dur = estimateOperationDuration(e.op, e.resList[0]);
+    Date start, end;
+    if (e.op->getOperation()) {
+      DateRange range = e.op->getOperation()->calculateOperationTime(
+          e.op, rawStart, dur, true);
+      start = range.getStart();
+      end = range.getEnd();
+    } else {
+      start = rawStart;
+      end = rawStart + dur;
+    }
 
     // Commit to all resources
     for (auto* r : e.resList) {
@@ -1481,54 +1148,9 @@ void SolverACO::localSearchJoint(AntSolution& sol) {
 double SolverACO::evaluate(const AntSolution& sol) {
   double tardiness = 0.0, cost = 0.0, setup = 0.0;
   const double MATERIAL_PENALTY = 1000.0;  // heavy penalty for violating material constraint
-  const double UNSCHEDULED_PENALTY = 1.0e6;
 
-  auto priorityFactorFor = [&](const OperationPlan* op) {
-    Demand* dmd = op->getTopOwner()->getDemand();
-    int dmdPrio = dmd ? dmd->getPriority() : 999;
-    return 1.0 + config_.weight_priority /
-                     (1.0 + static_cast<double>(dmdPrio));
-  };
-
-  auto resourceSetupTime = [&](const OperationPlan* from,
-                               const OperationPlan* to,
-                               const Resource* res) {
-    if (!from || !to || !res) return Duration(0L);
-    if (from->getOperation() == to->getOperation()) return Duration(0L);
-
-    PooledString fromSetup, toSetup;
-    const SetupMatrix* matrix = res->getSetupMatrix();
-    for (auto fl = from->beginLoadPlans(); fl != from->endLoadPlans(); ++fl) {
-      if (!fl->isStart()) continue;
-      Resource* lpRes = fl->getResource();
-      if (lpRes == res || (lpRes && lpRes->getTop() == res) ||
-          res->getTop() == lpRes) {
-        fromSetup = fl->getSetupLoad();
-        if (!matrix && lpRes) matrix = lpRes->getSetupMatrix();
-        break;
-      }
-    }
-    for (auto tl = to->beginLoadPlans(); tl != to->endLoadPlans(); ++tl) {
-      if (!tl->isStart()) continue;
-      Resource* lpRes = tl->getResource();
-      if (lpRes == res || (lpRes && lpRes->getTop() == res) ||
-          res->getTop() == lpRes) {
-        toSetup = tl->getSetupLoad();
-        if (!matrix && lpRes) matrix = lpRes->getSetupMatrix();
-        break;
-      }
-    }
-
-    if (fromSetup.empty() && toSetup.empty()) return Duration(0L);
-    if (!matrix) return computeSetupTime(from, to);
-    SetupMatrixRule* rule = matrix->calculateSetup(fromSetup, toSetup);
-    return rule ? rule->getDuration() : Duration(0L);
-  };
-
-  // Operation-level metrics are counted once, resource-level metrics are
-  // counted for every occupied resource in multi-resource operations.
-  unordered_set<const OperationPlan*> costedOps;
-  unordered_map<const OperationPlan*, Date> latestEndByOp;
+  // Track seen operations to avoid double-counting multi-resource ops
+  unordered_set<const OperationPlan*> seen;
 
   for (const auto& kv : sol.sequences) {
     const Resource* res = kv.first;
@@ -1540,45 +1162,41 @@ double SolverACO::evaluate(const AntSolution& sol) {
     for (size_t i = 0; i < seq.size(); ++i) {
       const OperationPlan* op = seq[i];
 
-      double priorityFactor = priorityFactorFor(op);
+      // Deduplicate: multi-resource ops appear on every resource they occupy
+      if (seen.count(op)) { prev = op; continue; }
+      seen.insert(op);
+
+      // Compute priority factor: lower priority number = higher importance.
+      // dmdPrio=0 → factor≈11x, dmdPrio=999 → factor≈1.0x
+      Demand* dmd = op->getTopOwner()->getDemand();
+      int dmdPrio = dmd ? dmd->getPriority() : 999;
+      double priorityFactor = 1.0
+          + config_.weight_priority / (1.0 + static_cast<double>(dmdPrio));
 
       // Factor 5: Material penalty if starting before material is available
       Date matAvail = earliestStart(op, res);
       if (starts[i] < matAvail)
         tardiness += MATERIAL_PENALTY * priorityFactor;
 
-      // Resource usage cost is charged for every occupied resource.
+      // Factor 3: Due date tardiness (priority-weighted)
+      if (dmd && dmd->getDue() != Date::infiniteFuture && ends[i] > dmd->getDue())
+        tardiness += static_cast<double>(
+            (ends[i] - dmd->getDue()).getSeconds()) / 3600.0 * priorityFactor;
+
+      // Factor: Operation cost (operation base + resource hourly)
+      cost += op->getOperation()->getCost() * op->getQuantity();
+      // Add resource usage cost per hour for the actual scheduled duration
       Duration dur = ends[i] - starts[i];
       if (dur > Duration(0L))
         cost += res->getCost() *
             static_cast<double>(dur.getSeconds()) / 3600.0;
 
-      // Factor 2: Setup time on this resource sequence.
+      // Factor 2: Setup time
       if (prev)
         setup += static_cast<double>(
-            resourceSetupTime(prev, op, res).getSeconds()) / 3600.0;
-
-      // Operation base cost and due-date tardiness are operation-level.
-      if (!costedOps.count(op)) {
-        cost += op->getOperation()->getCost() * op->getQuantity();
-        costedOps.insert(op);
-      }
-      auto endIt = latestEndByOp.find(op);
-      if (endIt == latestEndByOp.end() || ends[i] > endIt->second)
-        latestEndByOp[op] = ends[i];
+            computeSetupTime(prev, op).getSeconds()) / 3600.0;
 
       prev = op;
-    }
-  }
-
-  for (const auto& kv : latestEndByOp) {
-    const OperationPlan* op = kv.first;
-    Demand* dmd = op->getTopOwner()->getDemand();
-    if (dmd && dmd->getDue() != Date::infiniteFuture &&
-        kv.second > dmd->getDue()) {
-      tardiness += static_cast<double>(
-          (kv.second - dmd->getDue()).getSeconds()) / 3600.0 *
-          priorityFactorFor(op);
     }
   }
 
@@ -1593,11 +1211,6 @@ double SolverACO::evaluate(const AntSolution& sol) {
       resLoad += static_cast<double>((es[i] - ss[i]).getSeconds()) / 3600.0;
     loadBalance += resLoad * resLoad;
   }
-
-  if (sol.unscheduledCount > 0)
-    tardiness += UNSCHEDULED_PENALTY *
-                 max(sol.unscheduledPenalty,
-                     static_cast<double>(sol.unscheduledCount));
 
   return -(config_.weight_tardiness * tardiness +
            config_.weight_cost * cost +
@@ -1624,7 +1237,9 @@ const PheromoneMatrix* SolverACO::getPheromone(const Resource* res) const {
 
 void SolverACO::applyBestSolution(const AntSolution& best) {
   auto* cmdMgr = getCommandManager();
-  unordered_set<OperationPlan*> applied;
+  // Track which operations we've already processed (multi-resource ops
+  // appear in multiple resource sequences but should only be moved once).
+  unordered_set<const OperationPlan*> processed;
   for (const auto& kv : best.sequences) {
     const Resource* seqRes = kv.first;
     const auto& seq = kv.second;
@@ -1632,65 +1247,30 @@ void SolverACO::applyBestSolution(const AntSolution& best) {
     const auto& ends = best.endDates.at(seqRes);
 
     for (size_t i = 0; i < seq.size(); ++i) {
-      if (starts[i] != Date::infiniteFuture && ends[i] != Date::infiniteFuture) {
-        OperationPlan* op = seq[i];
-        if (applied.count(op)) continue;
-        applied.insert(op);
+      if (processed.count(seq[i])) continue;
+      processed.insert(seq[i]);
+      if (starts[i] == Date::infiniteFuture || ends[i] == Date::infiniteFuture)
+        continue;
+      OperationPlan* op = seq[i];
 
-        auto selectedLoadsIt = best.selectedLoadAssignments.find(op);
-        if (selectedLoadsIt != best.selectedLoadAssignments.end()) {
-          auto remainingAssignments = selectedLoadsIt->second;
+      // Apply exact load-to-resource assignments selected by ACO
+      auto lit = best.selectedLoadAssignments.find(op);
+      if (lit != best.selectedLoadAssignments.end()) {
+        for (const auto& la : lit->second) {
           for (auto lp = op->beginLoadPlans(); lp != op->endLoadPlans(); ++lp) {
-            if (!lp->isStart()) continue;
-            Load* currentLoad = lp->getLoad();
-            auto targetIt = find_if(
-                remainingAssignments.begin(), remainingAssignments.end(),
-                [&](const auto& assignment) { return assignment.first == currentLoad; });
-            if (targetIt == remainingAssignments.end()) continue;
-
-            const Load* targetLoad = targetIt->first;
-            const Resource* targetResource = targetIt->second;
-            remainingAssignments.erase(targetIt);
-            if (!targetResource) continue;
-
-            Resource* currentResource = lp->getResource();
-            if (currentLoad == targetLoad && currentResource == targetResource)
-              continue;
-
-            if (targetLoad && currentLoad != targetLoad)
-              lp->setLoad(const_cast<Load*>(targetLoad));
-            lp->setResource(const_cast<Resource*>(targetResource), false, false);
-          }
-        } else if (auto selectedIt = best.selectedResources.find(op);
-                   selectedIt != best.selectedResources.end()) {
-          vector<const Resource*> remainingTargets = selectedIt->second;
-          for (auto lp = op->beginLoadPlans(); lp != op->endLoadPlans(); ++lp) {
-            if (!lp->isStart()) continue;
-            Resource* currentResource = lp->getResource();
-            auto currentIt = find_if(
-                remainingTargets.begin(), remainingTargets.end(),
-                [&](const Resource* target) {
-                  return target == currentResource ||
-                         (currentResource && currentResource->getTop() == target) ||
-                         (target && target->getTop() == currentResource);
-                });
-            if (currentIt != remainingTargets.end()) {
-              remainingTargets.erase(currentIt);
-              continue;
+            if (lp->isStart() && lp->getLoad() == la.first &&
+                lp->getResource() != la.second) {
+              lp->setResource(const_cast<Resource*>(la.second), false, false);
+              break;
             }
-
-            if (remainingTargets.empty()) break;
-            const Resource* targetResource = remainingTargets.front();
-            remainingTargets.erase(remainingTargets.begin());
-            lp->setResource(const_cast<Resource*>(targetResource), false, false);
           }
         }
-
-        if (cmdMgr)
-          cmdMgr->add(new CommandMoveOperationPlan(op, starts[i], ends[i]));
-        else
-          op->setStart(starts[i], false, false);
       }
+
+      if (cmdMgr)
+        cmdMgr->add(new CommandMoveOperationPlan(op, starts[i], ends[i]));
+      else
+        op->setStart(starts[i], false, false);
     }
   }
 }
@@ -1739,11 +1319,10 @@ void SolverACO::solve(const Resource* res, void* v) {
     else ++stag;
 
     phero.evaporate(config_.evaporation);
-    phero.deposit(best.sequences[res],
-                  normalizedDepositAmount(config_, ants, 0, 1.25));
+    phero.deposit(best.sequences[res], config_.Q * (1.0 + max(0.0, best.fitness) * 0.01));
     for (int e = 0; e < config_.elite_ants && e < config_.ants; ++e)
       phero.deposit(ants[e].sequences[res],
-                    normalizedDepositAmount(config_, ants, e, 0.5));
+                    config_.Q * 0.5 * (1.0 + max(0.0, ants[e].fitness) * 0.01));
 
     if (stag >= config_.stagnation_limit) {
       if (getLogLevel() > 1)
@@ -1794,11 +1373,11 @@ void SolverACO::solveJoint(const vector<const Resource*>& resources) {
     for (auto* r : resources) pheromones_[r].evaporate(config_.evaporation);
     for (auto& kv : best.sequences)
       pheromones_[kv.first].deposit(kv.second,
-          normalizedDepositAmount(config_, ants, 0, 1.25));
+          config_.Q * (1.0 + max(0.0, best.fitness) * 0.01));
     for (int e = 0; e < config_.elite_ants && e < config_.ants; ++e)
       for (auto& kv : ants[e].sequences)
         pheromones_[kv.first].deposit(kv.second,
-            normalizedDepositAmount(config_, ants, e, 0.5));
+            config_.Q * 0.5 * (1.0 + max(0.0, ants[e].fitness) * 0.01));
 
     if (stag >= config_.stagnation_limit) {
       if (getLogLevel() > 1)
