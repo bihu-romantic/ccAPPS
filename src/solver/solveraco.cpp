@@ -525,11 +525,17 @@ vector<CandidateOp> SolverACO::buildCandidates(
       if (processed.count(op)) continue;
       processed.insert(op);
 
+      struct AlternativeGroup {
+        const Load* load = nullptr;
+        vector<const Resource*> choices;
+      };
+
       // Split constrained loads into:
       // 1. fixedResources: resources always required simultaneously
       // 2. alternativeGroups: one selection must be made from each group
       vector<const Resource*> fixedResources;
-      vector<vector<const Resource*>> alternativeGroups;
+      vector<pair<const Load*, const Resource*>> fixedAssignments;
+      vector<AlternativeGroup> alternativeGroups;
       for (const auto& ld : op->getOperation()->getLoads()) {
         const Resource* ldRes = ld.getResource();
         if (!ldRes || !ldRes->getConstrained()) continue;
@@ -539,10 +545,13 @@ vector<CandidateOp> SolverACO::buildCandidates(
           expandResourceAlternatives(ldRes, ld.getSkill(), choices);
           sort(choices.begin(), choices.end());
           choices.erase(unique(choices.begin(), choices.end()), choices.end());
-          if (!choices.empty()) alternativeGroups.push_back(move(choices));
+          if (!choices.empty())
+            alternativeGroups.push_back(AlternativeGroup{&ld, move(choices)});
         } else {
-          if (resourceHasSkill(ldRes, ld.getSkill()))
+          if (resourceHasSkill(ldRes, ld.getSkill())) {
             fixedResources.push_back(ldRes);
+            fixedAssignments.push_back({&ld, ldRes});
+          }
         }
       }
 
@@ -552,7 +561,8 @@ vector<CandidateOp> SolverACO::buildCandidates(
 
       set<vector<const Resource*>> emittedResourceSets;
       auto emitCandidate = [&](vector<const Resource*> occupiedResources,
-                               const Resource* preferredPrimary) {
+                               const Resource* preferredPrimary,
+                               vector<pair<const Load*, const Resource*>> loadAssignments) {
         if (occupiedResources.empty()) return;
         sort(occupiedResources.begin(), occupiedResources.end());
         occupiedResources.erase(
@@ -563,6 +573,7 @@ vector<CandidateOp> SolverACO::buildCandidates(
         CandidateOp c;
         c.op = op;
         c.allResources = occupiedResources;
+        c.loadAssignments = move(loadAssignments);
         c.res = preferredPrimary;
         if (!c.res ||
             find(c.allResources.begin(), c.allResources.end(), c.res) ==
@@ -581,6 +592,7 @@ vector<CandidateOp> SolverACO::buildCandidates(
       if (!alternativeGroups.empty()) {
         struct PartialCandidate {
           vector<const Resource*> selected;
+          vector<pair<const Load*, const Resource*>> loadAssignments;
           const Resource* primary = nullptr;
           Date earliest = Plan::instance().getCurrent();
           double cost = 0.0;
@@ -597,6 +609,7 @@ vector<CandidateOp> SolverACO::buildCandidates(
                     fixedResources.end()
                 ? res
                 : nullptr;
+        partials[0].loadAssignments = fixedAssignments;
         for (auto* fixed : fixedResources) {
           partials[0].earliest = max(partials[0].earliest, earliestStart(op, fixed));
           partials[0].cost += fixed->getCost();
@@ -605,11 +618,12 @@ vector<CandidateOp> SolverACO::buildCandidates(
         for (size_t groupIdx = 0; groupIdx < alternativeGroups.size(); ++groupIdx) {
           const auto& group = alternativeGroups[groupIdx];
           vector<PartialCandidate> expanded;
-          expanded.reserve(partials.size() * group.size());
+          expanded.reserve(partials.size() * group.choices.size());
           for (const auto& partial : partials) {
-            for (auto* choice : group) {
+            for (auto* choice : group.choices) {
               PartialCandidate next = partial;
               next.selected.push_back(choice);
+              next.loadAssignments.push_back({group.load, choice});
               next.earliest = max(next.earliest, earliestStart(op, choice));
               next.cost += choice->getCost();
               if (!next.primary || choice == res) next.primary = choice;
@@ -631,7 +645,7 @@ vector<CandidateOp> SolverACO::buildCandidates(
           for (size_t futureIdx = groupIdx + 1;
                futureIdx < alternativeGroups.size();
                ++futureIdx) {
-            downstreamExpansion *= alternativeGroups[futureIdx].size();
+            downstreamExpansion *= alternativeGroups[futureIdx].choices.size();
             if (downstreamExpansion >= static_cast<size_t>(maxBeamWidth)) {
               downstreamExpansion = static_cast<size_t>(maxBeamWidth);
               break;
@@ -659,7 +673,8 @@ vector<CandidateOp> SolverACO::buildCandidates(
           const Resource* primary = partial.primary;
           if (!primary && !partial.selected.empty()) primary = partial.selected.front();
           if (!primary && !fixedResources.empty()) primary = fixedResources.front();
-          emitCandidate(move(occupiedResources), primary);
+          emitCandidate(move(occupiedResources), primary,
+                        move(partial.loadAssignments));
         }
       } else {
         if (fixedResources.empty()) fixedResources.push_back(res);
@@ -668,7 +683,7 @@ vector<CandidateOp> SolverACO::buildCandidates(
                     fixedResources.end()
                 ? res
                 : fixedResources.front();
-        emitCandidate(fixedResources, primary);
+        emitCandidate(fixedResources, primary, fixedAssignments);
       }
       ++nextId;
     }
@@ -945,11 +960,12 @@ AntSolution SolverACO::constructJointSolution(
 
   auto appendScheduledOperation = [&](const CandidateOp& chosen, Date start,
                                       Date end) {
+    ant.selectedResources[chosen.op] = chosen.allResources;
+    ant.selectedLoadAssignments[chosen.op] = chosen.loadAssignments;
     for (auto* r : chosen.allResources) {
       ant.sequences[r].push_back(chosen.op);
       ant.startDates[r].push_back(start);
       ant.endDates[r].push_back(end);
-      ant.assignedResources[r].push_back(r);
       prevOp[r] = chosen.op;
       curTime[r] = end;
     }
@@ -1476,42 +1492,65 @@ const PheromoneMatrix* SolverACO::getPheromone(const Resource* res) const {
 
 void SolverACO::applyBestSolution(const AntSolution& best) {
   auto* cmdMgr = getCommandManager();
+  unordered_set<OperationPlan*> applied;
   for (const auto& kv : best.sequences) {
     const Resource* seqRes = kv.first;
     const auto& seq = kv.second;
     const auto& starts = best.startDates.at(seqRes);
     const auto& ends = best.endDates.at(seqRes);
-    const auto& assigned = best.assignedResources.count(seqRes)
-        ? best.assignedResources.at(seqRes)
-        : vector<const Resource*>();
 
     for (size_t i = 0; i < seq.size(); ++i) {
       if (starts[i] != Date::infiniteFuture && ends[i] != Date::infiniteFuture) {
         OperationPlan* op = seq[i];
+        if (applied.count(op)) continue;
+        applied.insert(op);
 
-        // If ACO chose a different resource than MRP, apply the change
-        if (i < assigned.size() && assigned[i] &&
-            assigned[i] != seqRes) {
-          // Find the first start loadplan and switch to the chosen resource.
-          // Look for the Load on the operation that owns the target resource.
+        auto selectedLoadsIt = best.selectedLoadAssignments.find(op);
+        if (selectedLoadsIt != best.selectedLoadAssignments.end()) {
+          auto remainingAssignments = selectedLoadsIt->second;
           for (auto lp = op->beginLoadPlans(); lp != op->endLoadPlans(); ++lp) {
             if (!lp->isStart()) continue;
-            // Find which Load on the operation owns the target resource
-            const Load* targetLoad = nullptr;
-            for (const auto& ld : op->getOperation()->getLoads()) {
-              // Match by top-level resource (for grouped resources) or directly
-              if (ld.getResource() == assigned[i] ||
-                  (ld.getResource()->isGroup() &&
-                   assigned[i]->getTop() == ld.getResource())) {
-                targetLoad = &ld;
-                break;
-              }
-            }
-            if (targetLoad)
+            Load* currentLoad = lp->getLoad();
+            auto targetIt = find_if(
+                remainingAssignments.begin(), remainingAssignments.end(),
+                [&](const auto& assignment) { return assignment.first == currentLoad; });
+            if (targetIt == remainingAssignments.end()) continue;
+
+            const Load* targetLoad = targetIt->first;
+            const Resource* targetResource = targetIt->second;
+            remainingAssignments.erase(targetIt);
+            if (!targetResource) continue;
+
+            Resource* currentResource = lp->getResource();
+            if (currentLoad == targetLoad && currentResource == targetResource)
+              continue;
+
+            if (targetLoad && currentLoad != targetLoad)
               lp->setLoad(const_cast<Load*>(targetLoad));
-            else
-              lp->setResource(const_cast<Resource*>(assigned[i]), false, false);
-            break;
+            lp->setResource(const_cast<Resource*>(targetResource), false, false);
+          }
+        } else if (auto selectedIt = best.selectedResources.find(op);
+                   selectedIt != best.selectedResources.end()) {
+          vector<const Resource*> remainingTargets = selectedIt->second;
+          for (auto lp = op->beginLoadPlans(); lp != op->endLoadPlans(); ++lp) {
+            if (!lp->isStart()) continue;
+            Resource* currentResource = lp->getResource();
+            auto currentIt = find_if(
+                remainingTargets.begin(), remainingTargets.end(),
+                [&](const Resource* target) {
+                  return target == currentResource ||
+                         (currentResource && currentResource->getTop() == target) ||
+                         (target && target->getTop() == currentResource);
+                });
+            if (currentIt != remainingTargets.end()) {
+              remainingTargets.erase(currentIt);
+              continue;
+            }
+
+            if (remainingTargets.empty()) break;
+            const Resource* targetResource = remainingTargets.front();
+            remainingTargets.erase(remainingTargets.begin());
+            lp->setResource(const_cast<Resource*>(targetResource), false, false);
           }
         }
 

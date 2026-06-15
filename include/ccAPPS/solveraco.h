@@ -70,6 +70,7 @@ struct CandidateOp {
   Date earliestStart;   // constrained by material availability + upstream deps
   int candId = 0;       // shared by candidates of the same operation plan
   vector<const Resource*> allResources;  // resources actually occupied by this candidate
+  vector<pair<const Load*, const Resource*>> loadAssignments;  // selected resource for each constrained load
 };
 
 /* A single ant's solution for resource scheduling. */
@@ -79,8 +80,11 @@ struct AntSolution {
   // Per-resource start/end dates
   unordered_map<const Resource*, vector<Date>> startDates;
   unordered_map<const Resource*, vector<Date>> endDates;
-  // Per-resource selected resource (may differ from original assignment)
-  unordered_map<const Resource*, vector<const Resource*>> assignedResources;
+  // Actual resources selected for each operation in joint mode
+  unordered_map<const OperationPlan*, vector<const Resource*>> selectedResources;
+  // Exact load-to-resource mapping selected for each operation
+  unordered_map<const OperationPlan*, vector<pair<const Load*, const Resource*>>>
+      selectedLoadAssignments;
   // Count of operations that couldn't be scheduled into the solution.
   size_t unscheduledCount = 0;
   // Weighted penalty contribution of operations that couldn't be scheduled.
