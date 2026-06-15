@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <tuple>
 #include <unordered_set>
 
 #include "ccAPPS/solveraco.h"
@@ -488,6 +489,29 @@ vector<CandidateOp> SolverACO::buildCandidates(
   unordered_set<OperationPlan*> processed;
   int nextId = 0;
 
+  auto resourceHasSkill = [](const Resource* res, Skill* requiredSkill) {
+    if (!requiredSkill) return true;
+    for (auto rs = res->getSkills();; ++rs) {
+      const ResourceSkill* rsk = &*rs;
+      if (!rsk) break;
+      if (rsk->getSkill() == requiredSkill) return true;
+    }
+    return false;
+  };
+
+  function<void(const Resource*, Skill*, vector<const Resource*>&)>
+      expandResourceAlternatives =
+          [&](const Resource* res, Skill* requiredSkill,
+              vector<const Resource*>& out) {
+            if (!res || !res->getConstrained()) return;
+            if (!res->isGroup()) {
+              if (resourceHasSkill(res, requiredSkill)) out.push_back(res);
+              return;
+            }
+            for (auto m = res->getMembers(); m != Resource::end(); ++m)
+              expandResourceAlternatives(&*m, requiredSkill, out);
+          };
+
   for (auto* res : resources) {
     auto loadplans = res->getLoadPlans();
     for (auto it = loadplans.begin(); it != loadplans.end(); ++it) {
@@ -501,83 +525,150 @@ vector<CandidateOp> SolverACO::buildCandidates(
       if (processed.count(op)) continue;
       processed.insert(op);
 
-      // Collect all constrained resources this operation could run on.
-      // Expand resource groups into individual child resources so ACO can
-      // choose the best machine within a pool.
-      unordered_set<const Resource*> altResources;
+      // Split constrained loads into:
+      // 1. fixedResources: resources always required simultaneously
+      // 2. alternativeGroups: one selection must be made from each group
+      vector<const Resource*> fixedResources;
+      vector<vector<const Resource*>> alternativeGroups;
       for (const auto& ld : op->getOperation()->getLoads()) {
         const Resource* ldRes = ld.getResource();
         if (!ldRes || !ldRes->getConstrained()) continue;
 
         if (ldRes->isGroup()) {
-          // Expand resource group up to 3 levels to find individual machines
-          for (auto m1 = ldRes->getMembers(); m1 != Resource::end(); ++m1) {
-            if (m1->isGroup()) {
-              for (auto m2 = m1->getMembers(); m2 != Resource::end(); ++m2) {
-                if (m2->isGroup()) {
-                  for (auto m3 = m2->getMembers(); m3 != Resource::end(); ++m3)
-                    altResources.insert(&*m3);
-                } else {
-                  altResources.insert(&*m2);
-                }
-              }
-            } else {
-              altResources.insert(&*m1);
-            }
-          }
+          vector<const Resource*> choices;
+          expandResourceAlternatives(ldRes, ld.getSkill(), choices);
+          sort(choices.begin(), choices.end());
+          choices.erase(unique(choices.begin(), choices.end()), choices.end());
+          if (!choices.empty()) alternativeGroups.push_back(move(choices));
         } else {
-          altResources.insert(ldRes);
+          if (resourceHasSkill(ldRes, ld.getSkill()))
+            fixedResources.push_back(ldRes);
         }
       }
 
-      // Separate machines from operators (group members).
-      // Generate one candidate per operator so each has a fair chance.
-      if (!altResources.empty()) {
-        vector<const Resource*> machines, operators;
-        for (auto* r : altResources) {
-          // A resource is an operator if it has a parent (owner)
-          if (r->getOwner() && r->getOwner() != r) operators.push_back(r);
-          else machines.push_back(r);
-        }
-        if (!operators.empty()) {
-          for (auto* oper : operators) {
-            CandidateOp c;
-            c.op = op;
-            c.allResources = machines;
-            c.allResources.push_back(oper);
-            c.res = oper;
-            Date eStart = Plan::instance().getCurrent();
-            for (auto* r : c.allResources) {
-              Date rStart = earliestStart(op, r);
-              if (rStart > eStart) eStart = rStart;
-            }
-            c.earliestStart = eStart;
-            c.candId = nextId++;
-            candidates.push_back(c);
-          }
-          processed.insert(op); continue; // skip outer ++nextId
-        } else {
-          CandidateOp c;
-          c.op = op;
-          c.allResources = machines;
-          c.res = c.allResources[0];
-          Date eStart = Plan::instance().getCurrent();
-          for (auto* r : c.allResources) {
-            Date rStart = earliestStart(op, r);
-            if (rStart > eStart) eStart = rStart;
-          }
-          c.earliestStart = eStart;
-          c.candId = nextId;
-          candidates.push_back(c);
-        }
-      } else {
+      sort(fixedResources.begin(), fixedResources.end());
+      fixedResources.erase(unique(fixedResources.begin(), fixedResources.end()),
+                           fixedResources.end());
+
+      set<vector<const Resource*>> emittedResourceSets;
+      auto emitCandidate = [&](vector<const Resource*> occupiedResources,
+                               const Resource* preferredPrimary) {
+        if (occupiedResources.empty()) return;
+        sort(occupiedResources.begin(), occupiedResources.end());
+        occupiedResources.erase(
+            unique(occupiedResources.begin(), occupiedResources.end()),
+            occupiedResources.end());
+        if (!emittedResourceSets.insert(occupiedResources).second) return;
+
         CandidateOp c;
         c.op = op;
-        c.res = res;
-        c.allResources.push_back(res);
-        c.earliestStart = earliestStart(op, res);
+        c.allResources = occupiedResources;
+        c.res = preferredPrimary;
+        if (!c.res ||
+            find(c.allResources.begin(), c.allResources.end(), c.res) ==
+                c.allResources.end())
+          c.res = c.allResources.front();
+        Date eStart = Plan::instance().getCurrent();
+        for (auto* rsrc : c.allResources) {
+          Date rStart = earliestStart(op, rsrc);
+          if (rStart > eStart) eStart = rStart;
+        }
+        c.earliestStart = eStart;
         c.candId = nextId;
         candidates.push_back(c);
+      };
+
+      if (!alternativeGroups.empty()) {
+        struct PartialCandidate {
+          vector<const Resource*> selected;
+          const Resource* primary = nullptr;
+          Date earliest = Plan::instance().getCurrent();
+          double cost = 0.0;
+        };
+
+        const int maxBeamWidth =
+            max(1, config_.max_candidate_combinations_per_op);
+        const int minBeamWidth = min(
+            maxBeamWidth,
+            max(4, static_cast<int>(sqrt(static_cast<double>(maxBeamWidth)))));
+        vector<PartialCandidate> partials(1);
+        partials[0].primary =
+            find(fixedResources.begin(), fixedResources.end(), res) !=
+                    fixedResources.end()
+                ? res
+                : nullptr;
+        for (auto* fixed : fixedResources) {
+          partials[0].earliest = max(partials[0].earliest, earliestStart(op, fixed));
+          partials[0].cost += fixed->getCost();
+        }
+
+        for (size_t groupIdx = 0; groupIdx < alternativeGroups.size(); ++groupIdx) {
+          const auto& group = alternativeGroups[groupIdx];
+          vector<PartialCandidate> expanded;
+          expanded.reserve(partials.size() * group.size());
+          for (const auto& partial : partials) {
+            for (auto* choice : group) {
+              PartialCandidate next = partial;
+              next.selected.push_back(choice);
+              next.earliest = max(next.earliest, earliestStart(op, choice));
+              next.cost += choice->getCost();
+              if (!next.primary || choice == res) next.primary = choice;
+              expanded.push_back(move(next));
+            }
+          }
+
+          sort(expanded.begin(), expanded.end(),
+               [&](const PartialCandidate& a, const PartialCandidate& b) {
+                 const bool preferA = a.primary == res;
+                 const bool preferB = b.primary == res;
+                 if (a.earliest != b.earliest) return a.earliest < b.earliest;
+                 if (a.cost != b.cost) return a.cost < b.cost;
+                 if (preferA != preferB) return preferA > preferB;
+                 return a.selected < b.selected;
+               });
+
+          size_t downstreamExpansion = 1;
+          for (size_t futureIdx = groupIdx + 1;
+               futureIdx < alternativeGroups.size();
+               ++futureIdx) {
+            downstreamExpansion *= alternativeGroups[futureIdx].size();
+            if (downstreamExpansion >= static_cast<size_t>(maxBeamWidth)) {
+              downstreamExpansion = static_cast<size_t>(maxBeamWidth);
+              break;
+            }
+          }
+
+          int layerBeamWidth = maxBeamWidth;
+          if (downstreamExpansion > 1) {
+            layerBeamWidth = static_cast<int>(
+                (maxBeamWidth + downstreamExpansion - 1) / downstreamExpansion);
+            layerBeamWidth = max(minBeamWidth, layerBeamWidth);
+          }
+          layerBeamWidth = min(layerBeamWidth, maxBeamWidth);
+          if (static_cast<int>(expanded.size()) > layerBeamWidth)
+            expanded.resize(layerBeamWidth);
+          partials = move(expanded);
+          if (partials.empty()) break;
+        }
+
+        for (auto& partial : partials) {
+          vector<const Resource*> occupiedResources = fixedResources;
+          occupiedResources.insert(occupiedResources.end(),
+                                   partial.selected.begin(),
+                                   partial.selected.end());
+          const Resource* primary = partial.primary;
+          if (!primary && !partial.selected.empty()) primary = partial.selected.front();
+          if (!primary && !fixedResources.empty()) primary = fixedResources.front();
+          emitCandidate(move(occupiedResources), primary);
+        }
+      } else {
+        if (fixedResources.empty()) fixedResources.push_back(res);
+        const Resource* primary =
+            find(fixedResources.begin(), fixedResources.end(), res) !=
+                    fixedResources.end()
+                ? res
+                : fixedResources.front();
+        emitCandidate(fixedResources, primary);
       }
       ++nextId;
     }
@@ -824,6 +915,149 @@ AntSolution SolverACO::constructJointSolution(
 
   // Total remaining unique operations.
   size_t remaining = candidateOps.size();
+
+  auto pickRepresentativeCandidate = [&](const OperationPlan* op)
+      -> const CandidateOp* {
+    const CandidateOp* best = nullptr;
+    Date bestStart = Date::infiniteFuture;
+    int bestPriority = numeric_limits<int>::max();
+    Date bestDue = Date::infiniteFuture;
+
+    for (const auto& cand : allCandidates) {
+      if (cand.op != op || cand.allResources.empty()) continue;
+      Demand* dmd = cand.op->getTopOwner()->getDemand();
+      int prio = dmd ? dmd->getPriority() : numeric_limits<int>::max();
+      Date due = (dmd && dmd->getDue() != Date::infiniteFuture)
+                     ? dmd->getDue()
+                     : Date::infiniteFuture;
+      if (!best || cand.earliestStart < bestStart ||
+          (cand.earliestStart == bestStart && prio < bestPriority) ||
+          (cand.earliestStart == bestStart && prio == bestPriority &&
+           due < bestDue)) {
+        best = &cand;
+        bestStart = cand.earliestStart;
+        bestPriority = prio;
+        bestDue = due;
+      }
+    }
+    return best;
+  };
+
+  auto appendScheduledOperation = [&](const CandidateOp& chosen, Date start,
+                                      Date end) {
+    for (auto* r : chosen.allResources) {
+      ant.sequences[r].push_back(chosen.op);
+      ant.startDates[r].push_back(start);
+      ant.endDates[r].push_back(end);
+      ant.assignedResources[r].push_back(r);
+      prevOp[r] = chosen.op;
+      curTime[r] = end;
+    }
+
+    for (auto fp = chosen.op->beginFlowPlans(); fp != chosen.op->endFlowPlans();
+         ++fp) {
+      const Buffer* buf = fp->getBuffer();
+      if (!buf) continue;
+      Date eventDate = fp->getQuantity() < 0.0 ? start : end;
+      ensureMaterialLedger(buf);
+      materialLedger[buf].push_back({eventDate, fp->getQuantity()});
+    }
+  };
+
+  auto forceScheduleRemaining = [&]() {
+    vector<const CandidateOp*> leftovers;
+    unordered_set<const OperationPlan*> emitted;
+    leftovers.reserve(candidateOps.size());
+
+    for (const auto& cand : allCandidates) {
+      if (!cand.op || scheduledOps.count(cand.op) || cand.allResources.empty())
+        continue;
+      if (emitted.count(cand.op)) continue;
+      const CandidateOp* rep = pickRepresentativeCandidate(cand.op);
+      if (!rep) continue;
+      leftovers.push_back(rep);
+      emitted.insert(cand.op);
+    }
+
+    sort(leftovers.begin(), leftovers.end(),
+         [](const CandidateOp* a, const CandidateOp* b) {
+           Demand* da = a && a->op ? a->op->getTopOwner()->getDemand() : nullptr;
+           Demand* db = b && b->op ? b->op->getTopOwner()->getDemand() : nullptr;
+           Date dueA =
+               (da && da->getDue() != Date::infiniteFuture) ? da->getDue()
+                                                            : Date::infiniteFuture;
+           Date dueB =
+               (db && db->getDue() != Date::infiniteFuture) ? db->getDue()
+                                                            : Date::infiniteFuture;
+           if (dueA != dueB) return dueA < dueB;
+
+           int prioA = da ? da->getPriority() : numeric_limits<int>::max();
+           int prioB = db ? db->getPriority() : numeric_limits<int>::max();
+           if (prioA != prioB) return prioA < prioB;
+
+           if (a->earliestStart != b->earliestStart)
+             return a->earliestStart < b->earliestStart;
+
+           return a->candId < b->candId;
+         });
+
+    for (const CandidateOp* forced : leftovers) {
+      if (!forced || !forced->op || scheduledOps.count(forced->op)) continue;
+
+      Date rawStart = forced->earliestStart;
+      for (auto* r : forced->allResources) {
+        Duration setup = computeSetupTime(prevOp[r], forced->op);
+        rawStart = max(rawStart, curTime[r] + setup);
+      }
+      Date matEarliest = operationMaterialDate(forced->op, rawStart);
+      if (matEarliest != Date::infiniteFuture) rawStart = max(rawStart, matEarliest);
+
+      const Resource* durationResource =
+          forced->res ? forced->res : forced->allResources.front();
+      Duration dur = estimateOperationDuration(forced->op, durationResource);
+      Date start, end;
+      if (forced->op->getOperation()) {
+        DateRange range = forced->op->getOperation()->calculateOperationTime(
+            forced->op, rawStart, dur, true);
+        start = range.getStart();
+        end = range.getEnd();
+      } else {
+        start = rawStart;
+        end = rawStart + dur;
+      }
+
+      appendScheduledOperation(*forced, start, end);
+      scheduledOps.insert(forced->op);
+      if (remaining > 0) --remaining;
+    }
+
+    ant.unscheduledPenalty = 0.0;
+    for (const auto& cand : allCandidates) {
+      if (!cand.op || scheduledOps.count(cand.op)) continue;
+      Demand* dmd = cand.op->getTopOwner()->getDemand();
+      int dmdPrio = dmd ? dmd->getPriority() : 999;
+      double priorityFactor =
+          1.0 + config_.weight_priority /
+                    (1.0 + static_cast<double>(dmdPrio));
+
+      double dueFactor = 1.0;
+      if (dmd && dmd->getDue() != Date::infiniteFuture) {
+        auto slackDays = static_cast<double>(
+                             (dmd->getDue() - Plan::instance().getCurrent())
+                                 .getSeconds()) /
+                         86400.0;
+        if (slackDays <= 0.0)
+          dueFactor = 5.0;
+        else
+          dueFactor = max(1.0, 10.0 / (1.0 + slackDays));
+      }
+
+      ant.unscheduledPenalty += priorityFactor * dueFactor;
+      scheduledOps.insert(cand.op);
+    }
+    ant.unscheduledCount = remaining;
+  };
+
   while (remaining > 0) {
     vector<const CandidateOp*> readyCandidates;
     vector<double> probs;
@@ -885,8 +1119,13 @@ AntSolution SolverACO::constructJointSolution(
       total += probability;
     }
 
-    if (readyCandidates.empty() || total <= 0.0)
-      break;  // Remaining operations are blocked by unscheduled upstream work.
+    if (readyCandidates.empty() || total <= 0.0) {
+      // Fallback: force-schedule the remaining operations so ants always
+      // return a complete-or-nearly-complete solution instead of stopping
+      // with a high-scoring partial schedule.
+      forceScheduleRemaining();
+      break;
+    }
 
     // Roulette selection over ready operation candidates. This makes the
     // operation choose its resource assignment, instead of a resource choosing
@@ -926,31 +1165,14 @@ AntSolution SolverACO::constructJointSolution(
       end = rawStart + dur;
     }
 
-    // Write to ALL resources this operation occupies.
-    for (auto* r : chosen.allResources) {
-      ant.sequences[r].push_back(chosen.op);
-      ant.startDates[r].push_back(start);
-      ant.endDates[r].push_back(end);
-      ant.assignedResources[r].push_back(r);
-      prevOp[r] = chosen.op;
-      curTime[r] = end;
-    }
-
-    // Update the material ledger with the chosen operation's timed
-    // consumption and production. This prevents later operations from
-    // consuming the same on-hand or incoming stock twice.
-    for (auto fp = chosen.op->beginFlowPlans();
-         fp != chosen.op->endFlowPlans(); ++fp) {
-      const Buffer* buf = fp->getBuffer();
-      if (!buf) continue;
-      Date eventDate = fp->getQuantity() < 0.0 ? start : end;
-      ensureMaterialLedger(buf);
-      materialLedger[buf].push_back({eventDate, fp->getQuantity()});
-    }
+    appendScheduledOperation(chosen, start, end);
 
     scheduledOps.insert(chosen.op);
     --remaining;
   }
+
+  ant.unscheduledCount = remaining;
+  if (remaining == 0) ant.unscheduledPenalty = 0.0;
 
   return ant;
 }
@@ -1033,7 +1255,19 @@ void SolverACO::compactSchedule(
       seen.insert(seq[i]);
       OpEntry e;
       e.op = seq[i];
-      e.resList = getConstrainedResources(seq[i]);
+      for (auto* r2 : resources) {
+        auto seqIt = ant.sequences.find(r2);
+        if (seqIt == ant.sequences.end()) continue;
+        for (auto* scheduledOp : seqIt->second) {
+          if (scheduledOp == seq[i]) {
+            e.resList.push_back(r2);
+            break;
+          }
+        }
+      }
+      sort(e.resList.begin(), e.resList.end());
+      e.resList.erase(unique(e.resList.begin(), e.resList.end()),
+                      e.resList.end());
       if (e.resList.empty()) e.resList.push_back(r);
       e.start = starts[i];
       e.end = ends[i];
@@ -1147,6 +1381,7 @@ void SolverACO::localSearchJoint(AntSolution& sol) {
 double SolverACO::evaluate(const AntSolution& sol) {
   double tardiness = 0.0, cost = 0.0, setup = 0.0;
   const double MATERIAL_PENALTY = 1000.0;  // heavy penalty for violating material constraint
+  const double UNSCHEDULED_PENALTY = 1.0e6;
 
   // Track seen operations to avoid double-counting multi-resource ops
   unordered_set<const OperationPlan*> seen;
@@ -1210,6 +1445,11 @@ double SolverACO::evaluate(const AntSolution& sol) {
       resLoad += static_cast<double>((es[i] - ss[i]).getSeconds()) / 3600.0;
     loadBalance += resLoad * resLoad;
   }
+
+  if (sol.unscheduledCount > 0)
+    tardiness += UNSCHEDULED_PENALTY *
+                 max(sol.unscheduledPenalty,
+                     static_cast<double>(sol.unscheduledCount));
 
   return -(config_.weight_tardiness * tardiness +
            config_.weight_cost * cost +

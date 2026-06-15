@@ -57,6 +57,7 @@ struct ACOConfig {
   int aco_mrp_iterations = 2;      // ACO↔MRP outer loops (1 = legacy single-pass)
   double aco_mrp_improvement = 0.01;  // Min relative fitness gain to continue
   int purchase_material_mode = 1;  // 0 = infinite, 1 = current + lead time
+  int max_candidate_combinations_per_op = 64;  // Beam width for multi-resource alternatives
 };
 
 /* A candidate operation plan that an ant can select.
@@ -65,10 +66,10 @@ struct ACOConfig {
  * them all at the same time. */
 struct CandidateOp {
   OperationPlan* op;
-  const Resource* res;  // primary resource (first in allResources)
+  const Resource* res;  // primary execution resource for duration/cost heuristics
   Date earliestStart;   // constrained by material availability + upstream deps
   int candId = 0;       // shared by candidates of the same operation plan
-  vector<const Resource*> allResources;  // ALL constrained resources needed
+  vector<const Resource*> allResources;  // resources actually occupied by this candidate
 };
 
 /* A single ant's solution for resource scheduling. */
@@ -80,6 +81,10 @@ struct AntSolution {
   unordered_map<const Resource*, vector<Date>> endDates;
   // Per-resource selected resource (may differ from original assignment)
   unordered_map<const Resource*, vector<const Resource*>> assignedResources;
+  // Count of operations that couldn't be scheduled into the solution.
+  size_t unscheduledCount = 0;
+  // Weighted penalty contribution of operations that couldn't be scheduled.
+  double unscheduledPenalty = 0.0;
   // Fitness value (higher is better)
   double fitness = -numeric_limits<double>::max();
 };
