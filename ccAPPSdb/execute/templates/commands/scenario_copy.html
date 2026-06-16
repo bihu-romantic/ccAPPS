@@ -55,7 +55,7 @@
        </button>
        <ul class="dropdown-menu" role="menu">
          <li><a class="dropdown-item scenariocopy" href="#" data-source="{{ current_database }}" data-bs-target="{{ j.name }}">
-           {% trans "Copy from" %} {{ current_database }}
+           从 {{ current_database }} 复制
          </a></li>
          {% for dump in dumps %}
          <li><a class="dropdown-item scenariocopy" href="#" dumpfile="{{ dump }}" data-source="{{ current_database }}" data-bs-target="{{ j.name }}">{% trans "Restore from backup" %} {{ dump }}</a></li>
@@ -70,11 +70,11 @@
        </button>
        <ul class="dropdown-menu" role="menu">
          <li><a class="dropdown-item scenariorelease" href="#" data-bs-target="{{ j.name }}">
-         {% trans "Release: You will lose ALL data in this scenario!" %}
+         释放：将清空此场景中的所有数据！
          </a></li>
          {% if current_database == j.name %}
          <li><a class="dropdown-item scenariopromote" href="#" data-source="{{ j.name }}" data-bs-target="{{ DEFAULT_DB_ALIAS }}" >
-         {% trans "Promote: All data will be copied to Production" %}
+         升级：将所有数据复制到生产环境
          </a></li>
          {% endif %}
        </ul>
@@ -129,6 +129,12 @@
 
 <script>
 
+// 从页面已有的 csrfmiddlewaretoken hidden input 读取 CSRF token
+function getCSRFToken() {
+  var inp = document.querySelector('input[name="csrfmiddlewaretoken"]');
+  return inp ? inp.value : '';
+}
+
 function handleScenarioAction(action) {
   const isAdd = action === "add";
   const $addBtn = $("#addScenarioBtn");
@@ -139,20 +145,20 @@ function handleScenarioAction(action) {
   $removeBtn.prop("disabled", true);
 
   $.ajax({
-    url: `/default/execute/scenario_${action}/`,
+    url: url_prefix + "/execute/scenario_" + action + "/",
     type: "POST",
+	    headers: {"X-CSRFToken": getCSRFToken()},
     success: function () {
-      const actionText = action === "add" ? "已启动添加场景任务" : "已启动删除场景任务";
-      $("#scenariotoast span").text(actionText);
+      const t = action === "add" ? "已启动添加场景任务" : "已启动删除场景任务";
+      $("#scenariotoast span").text(t);
       bootstrap.Toast.getOrCreateInstance($("#scenariotoast")[0], { delay: 5000 }).show();
-      // Reload the page. This can take while since the web server needs reloading.
       setTimeout(function () {
         location.reload();
       }, 1000);
     },
     error: function (xhr) {
-      const errorMsg = xhr.responseText || (action === "add" ? "添加场景时发生错误" : "删除场景时发生错误");
-      $("#scenariotoast span").text(errorMsg);
+      const t = xhr.responseText || (action === "add" ? "添加场景时发生错误" : "删除场景时发生错误");
+      $("#scenariotoast span").text(t);
       bootstrap.Toast.getOrCreateInstance($("#scenariotoast")[0], { delay: 5000 }).show();
 
       // Re-enable buttons
@@ -165,29 +171,28 @@ function handleScenarioAction(action) {
 $(".scenariorelease").on("click", function(event) {
   event.preventDefault();
   var releasedScenario = $(this).attr("data-bs-target");
-  var target = "/" + releasedScenario;
-  if (target == "/default")
-    target = "";
   $.ajax({
-   url: target + "/execute/launch/scenario_copy/",
+   url: url_prefix + "/execute/launch/scenario_copy/",
    type: 'POST',
+   headers: {"X-CSRFToken": getCSRFToken()},
    data: {release: 1, database:releasedScenario},
    success: function() {
      $("#scenariotoast span").text("已启动释放任务");
      bootstrap.Toast.getOrCreateInstance($("#scenariotoast")[0]).show();
-     if (target == url_prefix) window.location.href = "/"; 
+     setTimeout(function() { location.reload(); }, 500);
    },
-   fail: function() {
-    console.log("FAILED");
+   error: function(xhr) {
+     $("#scenariotoast span").text(xhr.responseText || "释放失败");
+     bootstrap.Toast.getOrCreateInstance($("#scenariotoast")[0], { delay: 5000 }).show();
    }
   });
 });
 $(".scenariopromote").on("click", function(event) {
   event.preventDefault();
-  var source = "/" + $(this).attr("data-source");
   $.ajax({
-   url: source + "/execute/launch/scenario_copy/",
+   url: url_prefix + "/execute/launch/scenario_copy/",
    type: 'POST',
+   headers: {"X-CSRFToken": getCSRFToken()},
    data: {
      promote: 1,
      source: $(this).attr("data-source"),
@@ -197,18 +202,17 @@ $(".scenariopromote").on("click", function(event) {
      $("#scenariotoast span").text("已启动升级任务");
      bootstrap.Toast.getOrCreateInstance($("#scenariotoast")[0]).show();
    },
-   fail: function() {
-    console.log("FAILED");
+   error: function(xhr) {
+     $("#scenariotoast span").text(xhr.responseText || "升级失败");
+     bootstrap.Toast.getOrCreateInstance($("#scenariotoast")[0], { delay: 5000 }).show();
    }});
 });
 $(".scenariocopy").on("click", function(event) {
   event.preventDefault();
-  var source = "/" + $(this).attr("data-source");
-  if (source == "/default")
-    source = "";
   $.ajax({
-   url: source + "/execute/launch/scenario_copy/",
+   url: url_prefix + "/execute/launch/scenario_copy/",
    type: 'POST',
+   headers: {"X-CSRFToken": getCSRFToken()},
    data: {
      copy: 1,
      source: $(this).attr("data-source"),
@@ -218,13 +222,18 @@ $(".scenariocopy").on("click", function(event) {
    success: function() {
      $("#scenariotoast span").text("已启动复制任务");
      bootstrap.Toast.getOrCreateInstance($("#scenariotoast")[0]).show();
+   },
+   error: function(xhr) {
+     $("#scenariotoast span").text(xhr.responseText || "复制失败");
+     bootstrap.Toast.getOrCreateInstance($("#scenariotoast")[0], { delay: 5000 }).show();
    }});
 });
 $(".scenariolabel").on("change", function(event) {
   event.preventDefault();
   $.ajax({
-   url: "/default/execute/launch/scenario_copy/",
+   url: url_prefix + "/execute/launch/scenario_copy/",
    type: 'POST',
+   headers: {"X-CSRFToken": getCSRFToken()},
    data: {
      update: 1,
      scenario: $(this).attr("data-bs-target"),
@@ -236,8 +245,9 @@ $(".scenario_theme").click(function() {
   event.preventDefault();
   var b = $(this);
   $.ajax({
-   url: "/default/execute/launch/scenario_copy/",
+   url: url_prefix + "/execute/launch/scenario_copy/",
    type: 'POST',
+   headers: {"X-CSRFToken": getCSRFToken()},
    data: {
      scenario: b.closest("div").attr("data-bs-target"),
      theme: b.attr("data-theme")

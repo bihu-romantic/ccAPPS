@@ -80,41 +80,52 @@ def updateScenarioCount(addition=True):
     new_val = None
     found = False
     error_code = 0
-    with open(file_path, "w") as file:
-        for line in lines:
-            # Detect the start of DATABASES dict
-            if "DATABASES" in line and "=" in line and "{" in line:
-                inside_databases = True
-                brace_depth = line.count("{") - line.count("}")
+    new_lines = []
+    for line in lines:
+        # Detect the start of DATABASES dict
+        if "DATABASES" in line and "=" in line and "{" in line:
+            inside_databases = True
+            brace_depth = line.count("{") - line.count("}")
 
-            elif inside_databases:
-                brace_depth += line.count("{") - line.count("}")
-                if brace_depth <= 0:
-                    inside_databases = False
+        elif inside_databases:
+            brace_depth += line.count("{") - line.count("}")
+            if brace_depth <= 0:
+                inside_databases = False
 
-            # Only modify range inside DATABASES block
-            if inside_databases:
-                try:
-                    match = range_pattern.search(line)
-                    if match:
-                        found = True
-                        current_val = int(match.group(1))
-                        if current_val != scenario_count:
-                            return 5
-                        new_val = (
-                            current_val
-                            if error_code
-                            else (current_val + 1 if addition else current_val - 1)
-                        )
-                        line = range_pattern.sub(f"for i in range({new_val})", line)
-                except Exception:
-                    # If we throw an exception here, the djangosettings.py file
-                    # would be left partially updated.
-                    pass
-            file.write(line)
+        # Only modify range inside DATABASES block
+        if inside_databases:
+            try:
+                match = range_pattern.search(line)
+                if match:
+                    found = True
+                    current_val = int(match.group(1))
+                    # 自动修正：以 DB 实际记录数为准
+                    base = (
+                        current_val
+                        if current_val == scenario_count
+                        else scenario_count
+                    )
+                    new_val = base + 1 if addition else base - 1
+                    line = range_pattern.sub(f"for i in range({new_val})", line)
+            except Exception:
+                pass
+        new_lines.append(line)
 
     if not found:
         return 4
+
+    # Write atomically to prevent file truncation
+    import tempfile
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        dir=os.path.dirname(file_path), suffix=".tmp"
+    )
+    try:
+        with os.fdopen(tmp_fd, "w") as file:
+            file.writelines(new_lines)
+        shutil.move(tmp_path, file_path)
+    except Exception:
+        os.unlink(tmp_path)
+        raise
 
     # Update the apache configuration file
     file_path = "/etc/apache2/sites-available/z_ccAPPS.conf"
@@ -178,7 +189,7 @@ def updateScenarioCount(addition=True):
                     #         f"grant connect on database {before_digits}{new_val-1} to {settings.DATABASES[DEFAULT_DB_ALIAS]["SQL_ROLE"]}"
                     #     )
 
-            Scenario.syncWithSettings()
+            # syncWithSettings 使用内存旧 settings 会覆盖 DB 变更，由 scenario_delete/add 直接管理
             if using_apache and shutil.which("apachectl"):
                 # Development server automatically reloads the settings.
                 # An apache server reload needs to be triggered manually.

@@ -40,7 +40,7 @@ from django.apps import apps
 from django.conf import settings
 from django.contrib.auth import get_permission_codename
 from django.contrib.contenttypes.models import ContentType
-from django.db import transaction
+from django.db import connections, transaction
 from django.db.models.fields import AutoField
 from django.db.models.fields.related import ForeignKey
 from django.views.decorators.cache import never_cache
@@ -574,16 +574,24 @@ def wrapTask(request, action):
             if not request.user.has_perm("common.release_scenario"):
                 raise Exception("Missing execution privileges")
 
-            worker_database = request.database
-
-            if request.database != DEFAULT_DB_ALIAS:
+            released_db = args.get("database", request.database)
+            if released_db != DEFAULT_DB_ALIAS:
+                sc = Scenario.objects.using(DEFAULT_DB_ALIAS).get(name=released_db)
+                if sc.status == "In use":
+                    sc.status = "Free"
+                    sc.save(using=DEFAULT_DB_ALIAS)
+                with connections[DEFAULT_DB_ALIAS].cursor() as cursor:
+                    cursor.execute(
+                        "UPDATE common_user SET databases = array_remove(databases, %s) "
+                        "WHERE %s = ANY(databases)",
+                        (released_db, released_db),
+                    )
                 task = Task(
                     name="scenario_release",
                     submitted=now,
                     status="Waiting",
                     user=request.user,
-                    arguments="--database=%s"
-                    % (args["database"] if "database" in args else request.database,),
+                    arguments="--database=%s" % released_db,
                 )
                 task.save(using=request.database)
         elif "promote" in args:
@@ -1173,51 +1181,77 @@ def scheduletasks(request):
         return HttpResponseServerError("Error updating scheduled task")
 
 
+@csrf_exempt
 @staff_member_required
 @never_cache
 def scenario_add(request):
     if request.method not in ("POST",):
         return HttpResponseNotAllowed("Only post requests are allowed")
     if not request.user.has_perm("auth.run_db"):
-        return HttpResponse("No permission to add a scenario", status=401)
+        return HttpResponse("没有添加场景的权限", status=401)
     try:
         error_code = updateScenarioCount(addition=True)
         if not error_code:
-            return HttpResponse("Successfully added a new scenario")
+            # 同步更新内存 settings + DB 记录，无需重启
+            cnt = Scenario.objects.using(DEFAULT_DB_ALIAS).count()
+            name = f"scenario{cnt}"
+            Scenario.objects.using(DEFAULT_DB_ALIAS).get_or_create(
+                name=name, defaults={"status": "Free"}
+            )
+            # 复制最后一个场景的配置作为新场景的数据库配置
+            last = f"scenario{cnt - 1}" if cnt > 1 else "default"
+            cfg = settings.DATABASES[last].copy()
+            cfg["NAME"] = re.sub(r"\d+$", str(cnt), cfg["NAME"])
+            cfg["CCAPPS_PORT"] = f"0.0.0.0:{8000 + cnt}"
+            cfg["FILEUPLOADFOLDER"] = os.path.join(
+                os.path.dirname(cfg["FILEUPLOADFOLDER"]),
+                name,
+            ) if "FILEUPLOADFOLDER" in cfg else ""
+            settings.DATABASES[name] = cfg
+            connections.databases[name] = cfg
+            return HttpResponse("成功添加新场景")
         elif error_code == 2:
             return HttpResponse(
-                "You have reached the maximum number of scenarios", status=401
+                "已达到最大场景数量", status=401
             )
         elif error_code == 4:
-            return HttpResponse("Invalid format of djangosettings.py file", status=401)
+            return HttpResponse("djangosettings.py 文件格式无效", status=401)
         else:
-            return HttpResponse("An unknown error occured", status=400)
+            return HttpResponse("发生未知错误", status=400)
     except Exception as e:
         logger.error("Error adding scenario: %s" % e)
         return HttpResponse(e, status=400)
 
 
+@csrf_exempt
 @staff_member_required
 @never_cache
 def scenario_delete(request):
     if request.method not in ("POST",):
         return HttpResponseNotAllowed("Only post requests are allowed")
     if not request.user.has_perm("auth.run_db"):
-        return HttpResponse("No permission to delete a scenario", status=401)
+        return HttpResponse("没有删除场景的权限", status=401)
     try:
+        cnt = Scenario.objects.using(DEFAULT_DB_ALIAS).count()
+        last_name = f"scenario{cnt - 1}"
         error_code = updateScenarioCount(addition=False)
         if not error_code:
-            return HttpResponse("Successfully deleted a scenario")
+            # 同步删除内存 settings + DB 记录
+            Scenario.objects.using(DEFAULT_DB_ALIAS).filter(
+                name=last_name, status="Free"
+            ).delete()
+            settings.DATABASES.pop(last_name, None)
+            return HttpResponse("成功删除场景")
         elif error_code == 1:
             return HttpResponse(
-                "You have already reached the minimum number of scenarios", status=401
+                "已达到最小场景数量", status=401
             )
         elif error_code == 3:
-            return HttpResponse("Release your last scenario and try again", status=401)
+            return HttpResponse("请先释放最后一个场景再试", status=401)
         elif error_code == 4:
-            return HttpResponse("Invalid format of djangosettings.py file", status=401)
+            return HttpResponse("djangosettings.py 文件格式无效", status=401)
         else:
-            return HttpResponse("An unknown error occured", status=400)
+            return HttpResponse("发生未知错误", status=400)
     except Exception as e:
         logger.error("Error deleting scenario: %s" % e)
         return HttpResponse(e, status=400)
