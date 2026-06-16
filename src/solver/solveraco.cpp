@@ -855,6 +855,13 @@ AntSolution SolverACO::constructJointSolution(
           : 0.0;
       double startFactor = 1.0 / (1.0 + startWaitH);
 
+      // Duration factor: prefer shorter operations to unlock resources faster.
+      // Shorter operations → higher probability → faster bottleneck release.
+      const Resource* durRes = !c.allResources.empty() ? c.allResources[0] : nullptr;
+      Duration estDur = durRes ? estimateOperationDuration(c.op, durRes) : Duration(3600L);
+      double durHours = static_cast<double>(estDur.getSeconds()) / 3600.0;
+      double durationFactor = max(0.2, 1.0 / (1.0 + durHours * 0.05));
+
       double tau = 0.0;
       double eta = 0.0;
       for (auto* r : c.allResources) {
@@ -876,7 +883,7 @@ AntSolution SolverACO::constructJointSolution(
         upstreamFactor = 1.0 + 0.3 * usIt->second;
 
       double probability = pow(tau, config_.alpha) *
-          pow(max(eta * readiness * upstreamFactor * startFactor, 1e-9),
+          pow(max(eta * readiness * upstreamFactor * startFactor * durationFactor, 1e-9),
               config_.beta);
       if (probability <= 0.0) continue;
 
@@ -951,6 +958,22 @@ AntSolution SolverACO::constructJointSolution(
 
     scheduledOps.insert(chosen.op);
     --remaining;
+  }
+
+  // Penalize unscheduled operations: they represent deadlocked work.
+  ant.unscheduledCount = remaining;
+  if (remaining > 0) {
+    double totalPrioWeight = 0.0;
+    for (auto& c : allCandidates) {
+      if (c.op && !scheduledOps.count(c.op)) {
+        Demand* dmd = c.op->getTopOwner()->getDemand();
+        int prio = dmd ? dmd->getPriority() : 999;
+        totalPrioWeight += 1.0 + config_.weight_priority / (1.0 + static_cast<double>(prio));
+      }
+    }
+    ant.unscheduledPenalty = totalPrioWeight * 500.0;
+  } else {
+    ant.unscheduledPenalty = 0.0;
   }
 
   return ant;
@@ -1212,10 +1235,15 @@ double SolverACO::evaluate(const AntSolution& sol) {
     loadBalance += resLoad * resLoad;
   }
 
+  // Heavy penalty for unscheduled operations (deadlocked work)
+  double unscheduledPenalty = sol.unscheduledCount > 0
+      ? (sol.unscheduledPenalty + 10000.0 * sol.unscheduledCount) : 0.0;
+
   return -(config_.weight_tardiness * tardiness +
            config_.weight_cost * cost +
            config_.weight_setup * setup +
-           config_.weight_balance * loadBalance);
+           config_.weight_balance * loadBalance +
+           unscheduledPenalty);
 }
 
 // ==========================================================================

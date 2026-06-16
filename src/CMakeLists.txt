@@ -71,8 +71,10 @@ add_library(solver STATIC
   "solver/solverplan.cpp"
   "solver/solverresource.cpp"
   "solver/solveraco.cpp"
+  "solver/solverga.cpp"
   "${CMAKE_SOURCE_DIR}/include/ccAPPS/solver.h"
   "${CMAKE_SOURCE_DIR}/include/ccAPPS/solveraco.h"
+  "${CMAKE_SOURCE_DIR}/include/ccAPPS/solverga.h"
 )
 add_dependencies(solver model)
 

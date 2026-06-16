@@ -93,6 +93,8 @@ struct AntSolution {
   double fitness = -numeric_limits<double>::max();
 };
 
+Duration estimateOperationDuration(const OperationPlan* op, const Resource* res);
+
 /* Pheromone matrix for transitions between operationplans on a resource. */
 class PheromoneMatrix {
  public:
@@ -158,7 +160,7 @@ class SolverACO : public SolverCreate {
   void initPheromone(const Resource* res);
   const PheromoneMatrix* getPheromone(const Resource* res) const;
 
- private:
+ protected:
   /* ---- Candidate building ---- */
   vector<CandidateOp> buildCandidates(
       const vector<const Resource*>& resources) const;
