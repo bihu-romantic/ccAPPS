@@ -136,9 +136,9 @@
 .row { margin-left: 0 !important; margin-right: 0 !important; padding: 0 10px !important; }
 #save_undo, #toolicons { padding-left: 0 !important; padding-right: 0 !important; }
 /* Lighter toolbar buttons */
-#rg-zoom-in, #rg-zoom-out, #pe-gear-btn, #bucketconfig,
+#rg-zoom-in, #rg-zoom-out, #pe-gear-btn,
 #pe-top-save-btn, #pe-top-undo-btn { background: #ff9800; border-color: #ff9800; }
-#rg-zoom-in:hover, #rg-zoom-out:hover, #pe-gear-btn:hover, #bucketconfig:hover,
+#rg-zoom-in:hover, #rg-zoom-out:hover, #pe-gear-btn:hover,
 #pe-top-save-btn:hover, #pe-top-undo-btn:hover { background: #fb8c00; border-color: #fb8c00; }
 
 .pe-tooltip {
@@ -3969,7 +3969,6 @@ function onTypeFilterChange() {
 
 {% block actions %}
 <div style="display:flex;align-items:center;justify-content:flex-end;width:100%;gap:4px">
-    <button class="btn btn-primary" onclick="grid.showBucket()" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="{% trans 'set time horizon'|capfirst|force_escape %}" id="bucketconfig"><span class="fa fa-clock-o"></span></button>
     <button class="btn btn-primary" id="rg-zoom-in" onclick="zoomCombinedGantt(1.3)" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="{% trans 'zoom in'|force_escape %}"><span class="fa fa-search-plus"></span></button>
     <button class="btn btn-primary" id="rg-zoom-out" onclick="zoomCombinedGantt(0.7)" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="{% trans 'zoom out'|force_escape %}"><span class="fa fa-search-minus"></span></button>
     <div style="position:relative;display:inline-block">
@@ -4043,7 +4042,6 @@ function onTypeFilterChange() {
     </div>
   </div>
 </div>
-{% include "admin/subtemplate_timebuckets.html" %}
 {% endblock %}
 
 {% block afterPageLoad %}{% endblock %}

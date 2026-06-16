@@ -43,7 +43,7 @@ class Command(BaseCommand):
 
     requires_system_checks = []
     title = _("Export a spreadsheet")
-    index = 1900
+    index = 1501
     help_url = "command-reference.html#exportworkbook"
 
     @staticmethod

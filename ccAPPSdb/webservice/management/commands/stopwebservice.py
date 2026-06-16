@@ -150,7 +150,7 @@ class Command(BaseCommand):
 
     # Dummy index and getHTML method to assure the stopwebservice command
     # can be selected in the task list for the task scheduler
-    index = 1501
+    index = 1504
 
     @staticmethod
     def getHTML(request):

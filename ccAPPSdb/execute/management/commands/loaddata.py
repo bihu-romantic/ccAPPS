@@ -64,8 +64,8 @@ class Command(loaddata.Command):
             "commands/loaddata.html", {"fixtures": fixtures}, request=request
         )
 
-    title = _("Load a dataset")
-    index = 1750
+    title = _("载入示例数据集")
+    index = 1000
     help_url = "command-reference.html#loaddata"
 
     def add_arguments(self, parser):

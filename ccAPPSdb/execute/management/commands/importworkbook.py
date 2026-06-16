@@ -347,7 +347,7 @@ class Command(BaseCommand):
 
     # accordion template
     title = _("Import a spreadsheet")
-    index = 2000
+    index = 1502
     help_url = "command-reference.html#importworkbook"
 
     @staticmethod

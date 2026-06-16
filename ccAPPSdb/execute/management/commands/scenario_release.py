@@ -159,7 +159,7 @@ class Command(BaseCommand):
                 task.processid = None
                 task.save(using=database)
 
-    index = 1501
+    index = 1503
 
     @staticmethod
     def getHTML(request):

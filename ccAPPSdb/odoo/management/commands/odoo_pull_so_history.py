@@ -425,8 +425,8 @@ class Command(BaseCommand):
             setattr(_thread_locals, "database", old_thread_locals)
 
     # accordion template
-    title = _("Pull all demand history from %(erp)s") % {"erp": "odoo"}
-    index = 2500
+    title = _("从odoo导入销售订单")
+    index = 1005
     help_url = "command-reference.html#odoo_pull_so_history"
 
     @staticmethod

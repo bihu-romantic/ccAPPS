@@ -89,7 +89,7 @@ class Command(BaseCommand):
             <td style="vertical-align:top; padding: 15px">
                <button  class="btn btn-primary"  type="submit" value="{% trans "launch"|capfirst %}">{% trans "launch"|capfirst %}</button>
             </td>
-            <td  style="padding: 0px 15px;">{% trans "Import erp data into ccAPPS." %}
+            <td  style="padding: 0px 15px;">从 ERP 导入数据到 ccAPPS。
             </td>
           </tr>
         </table>

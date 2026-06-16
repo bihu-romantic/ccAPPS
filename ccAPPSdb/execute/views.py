@@ -1797,6 +1797,7 @@ class PlanEdit(GridReport):
     filterable = False
     frozenColumns = 1
     height = 250
+    hasTimeBuckets = False
     default_sort = (0, "asc")
 
     rows = (
