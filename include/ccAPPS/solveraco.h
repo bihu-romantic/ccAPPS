@@ -149,6 +149,7 @@ class SolverACO : public SolverCreate {
   void solve(void* v = nullptr) override;
   void solve(const Resource* res, void* v = nullptr) override;
   void solveJoint(const vector<const Resource*>& resources);
+  bool preserveRawMRPResult() const override { return true; }
 
   void solve(const ResourceInfinite* r, void* v = nullptr) override {
     SolverCreate::solve(r, v);
@@ -200,6 +201,8 @@ class SolverACO : public SolverCreate {
       const unordered_map<const Resource*, Date>& resourceTimes) const;
   Duration computeSetupTime(const OperationPlan* from,
                             const OperationPlan* to) const;
+  bool shouldLockOptimizedPlan(const OperationPlan* op) const;
+  void lockOptimizedPlan(OperationPlan* op);
 
   ACOConfig config_;
   unordered_map<const Resource*, PheromoneMatrix> pheromones_;

@@ -1299,8 +1299,21 @@ void SolverACO::applyBestSolution(const AntSolution& best) {
         cmdMgr->add(new CommandMoveOperationPlan(op, starts[i], ends[i]));
       else
         op->setStart(starts[i], false, false);
+      lockOptimizedPlan(op);
     }
   }
+}
+
+bool SolverACO::shouldLockOptimizedPlan(const OperationPlan* op) const {
+  if (!op || !op->getOperation()) return false;
+  return !op->getOperation()->hasType<OperationDelivery, OperationItemSupplier,
+                                      OperationItemDistribution>();
+}
+
+void SolverACO::lockOptimizedPlan(OperationPlan* op) {
+  if (!op) return;
+  auto* top = op->getTopOwner();
+  if (shouldLockOptimizedPlan(top)) top->setAcoLocked(true);
 }
 
 // ==========================================================================
@@ -1479,86 +1492,19 @@ vector<const Resource*> bottleneck = collectBottlenecks();
     return;
   }
 
-  double prevFitness = -numeric_limits<double>::max();
+  // ---- Phase 1: ACO optimization ----
+  if (bottleneck.size() >= 2 && config_.joint_optimization)
+    solveJoint(bottleneck);
+  else if (bottleneck.size() == 1)
+    solve(bottleneck[0], v);
 
-  // Outer loop: ACO → MRP → re-collect → ACO → ... until convergence.
-  // Each MRP pass propagates ACO's schedule changes through material flows
-  // and resolves shortages. The next ACO pass then sees updated material
-  // availability (via earliestStart / dynamicEarliestStart) and can
-  // adjust the schedule accordingly.
-  for (int outerIter = 0; outerIter < config_.aco_mrp_iterations; ++outerIter) {
-    if (getLogLevel() > 1)
-      logger << indentlevel << "ACO↔MRP pass " << (outerIter + 1)
-             << " of " << config_.aco_mrp_iterations << " ("
-             << bottleneck.size() << " bottleneck resources)\n";
+  // ---- Phase 2: Material propagation ----
+  if (config_.runMRP)
+    SolverCreate::solve(v);
 
-    // ---- Phase 1: ACO optimization ----
-    if (bottleneck.size() >= 2 && config_.joint_optimization)
-      solveJoint(bottleneck);
-    else if (bottleneck.size() == 1)
-      solve(bottleneck[0], v);
-    else
-      break;
-
-    // ---- Phase 2: Material propagation ----
-    // ACO has set new start/end dates on operation plans (via
-    // applyBestSolution → CommandMoveOperationPlan). We now need to:
-    //   1. Synchronise flow plan dates with their operation plan dates
-    //   2. Recalculate buffer on-hand profiles
-    //   3. Resolve any material shortages introduced by ACO's resequencing
-    //
-    // SolverCreate::solve(void*) runs the full MRP pipeline: it re-evaluates
-    // all demands and propagates changes through the supply chain. This is
-    // heavier than a material-only propagation but is functionally correct:
-    // MRP respects the operation plan dates already set by ACO and only
-    // creates new supply where shortages exist. A dedicated
-    // propagateMaterialChanges() would be lighter but requires refactoring
-    // the solver infrastructure (TODO for future optimisation).
-    if (config_.runMRP)
-      SolverCreate::solve(v);
-
-    // ---- Convergence check (skip on first and last iteration) ----
-    if (outerIter > 0 && outerIter < config_.aco_mrp_iterations - 1) {
-      double absDenom = max(abs(prevFitness), 1.0);
-      double improvement = (lastBestFitness_ - prevFitness) / absDenom;
-      if (improvement < config_.aco_mrp_improvement) {
-        if (getLogLevel() > 1)
-          logger << indentlevel << "ACO↔MRP converged after "
-                 << (outerIter + 1) << " passes (Δf/|f|="
-                 << improvement << " < " << config_.aco_mrp_improvement
-                 << ")\n";
-        break;
-      }
-    }
-    prevFitness = lastBestFitness_;
-
-    // Last iteration — don't re-collect, we're done.
-    if (outerIter >= config_.aco_mrp_iterations - 1) break;
-
-    // ---- Phase 3: Re-collect bottleneck resources ----
-    // MRP may have changed the landscape: new supply operations created,
-    // resource assignments altered, or dates updated. Re-scan so the
-    // next ACO pass works with fresh data.
-    vector<const Resource*> newBottleneck = collectBottlenecks();
-
-    // Early termination: if the bottleneck set is identical AND the
-    // previous ACO pass stagnated (no improvement within its own
-    // iterations), further passes are unlikely to help.
-    if (newBottleneck.size() == bottleneck.size() && stagnationOccurred_) {
-      bool same = true;
-      for (size_t i = 0; i < newBottleneck.size(); ++i) {
-        if (newBottleneck[i] != bottleneck[i]) { same = false; break; }
-      }
-      if (same) {
-        if (getLogLevel() > 1)
-          logger << indentlevel << "ACO↔MRP: bottleneck set unchanged + "
-                 << "ACO stagnated → stopping after " << (outerIter + 1)
-                 << " passes\n";
-        break;
-      }
-    }
-    bottleneck = move(newBottleneck);
-  }
+  // ---- Unlock ACO-optimized plans ----
+  for (auto op = OperationPlan::begin(); op != OperationPlan::end(); ++op)
+    op->setAcoLocked(false);
 }
 
 }  // namespace ccAPPS

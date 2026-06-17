@@ -960,8 +960,8 @@ OperationPlanState OperationFixedTime::setOperationPlanParameters(
   if (!opplan || q < 0)
     throw LogicException("Incorrect parameters for fixedtime operationplan");
 
-  // Confirmed operationplans are untouchable
-  if (opplan->getConfirmed() && !opplan->getForcedUpdate())
+  // Confirmed or ACO-locked operationplans are untouchable
+  if ((opplan->getConfirmed() || opplan->getAcoLocked()) && !opplan->getForcedUpdate())
     return OperationPlanState(opplan);
 
   // Compute the start and end date
@@ -1244,9 +1244,9 @@ OperationPlanState OperationTimePer::setOperationPlanParameters(
   if (!opplan || q < 0)
     throw LogicException("Incorrect parameters for timeper operationplan");
 
-  // Confirmed operationplans are untouchable... in most cases
-  if (opplan->getConfirmed() && !opplan->getQuantityCompleted() &&
-      !opplan->getForcedUpdate())
+  // Confirmed or ACO-locked operationplans are untouchable... in most cases
+  if ((opplan->getConfirmed() || opplan->getAcoLocked()) &&
+      !opplan->getQuantityCompleted() && !opplan->getForcedUpdate())
     return OperationPlanState(opplan);
 
   if (opplan->getProposed()) {
@@ -1681,8 +1681,8 @@ OperationPlanState OperationRouting::setOperationPlanParameters(
   if (!opplan || q < 0)
     throw LogicException("Incorrect parameters for routing operationplan");
 
-  // Confirmed operationplans are untouchable
-  if (opplan->getConfirmed()) return OperationPlanState(opplan);
+  // Confirmed or ACO-locked operationplans are untouchable
+  if (opplan->getConfirmed() || opplan->getAcoLocked()) return OperationPlanState(opplan);
 
   if (!opplan->lastsubopplan)  // @todo replace with proper iterator
   {
@@ -1793,8 +1793,8 @@ OperationPlanState OperationAlternate::setOperationPlanParameters(
   if (!opplan || q < 0)
     throw LogicException("Incorrect parameters for alternate operationplan");
 
-  // Confirmed operationplans are untouchable
-  if (opplan->getConfirmed()) return OperationPlanState(opplan);
+  // Confirmed or ACO-locked operationplans are untouchable
+  if (opplan->getConfirmed() || opplan->getAcoLocked()) return OperationPlanState(opplan);
 
   OperationPlan* x = opplan->lastsubopplan;
   if (!x) {
@@ -1842,8 +1842,8 @@ OperationPlanState OperationSplit::setOperationPlanParameters(
   if (!opplan || q < 0)
     throw LogicException("Incorrect parameters for split operationplan");
 
-  // Confirmed operationplans are untouchable
-  if (opplan->getConfirmed()) return OperationPlanState(opplan);
+  // Confirmed or ACO-locked operationplans are untouchable
+  if (opplan->getConfirmed() || opplan->getAcoLocked()) return OperationPlanState(opplan);
 
   // Blindly accept the parameters: only sizing constraints from the child
   // operations are respected.

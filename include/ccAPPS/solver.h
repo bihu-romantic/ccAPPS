@@ -329,8 +329,14 @@ class SolverCreate : public Solver {
    * The demands in the model will all be sorted with the criteria defined in
    * the demand_comparison() method. For each of demand the solve(Demand*)
    * method is called to plan it.
-   */
+  */
   void solve(void* v = nullptr) override;
+
+  /* Some derived solvers need the raw MRP output as the input for a
+   * scheduling optimizer. In that mode MRP postprocessing must not merge,
+   * resize or delete the freshly created operationplans.
+   */
+  virtual bool preserveRawMRPResult() const { return false; }
 
   /* Constructor. */
   SolverCreate() : commands(this) {

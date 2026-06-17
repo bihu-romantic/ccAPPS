@@ -566,51 +566,16 @@ void SolverGA::solve(void* v) {
     return;
   }
 
-  double prevFitness = -numeric_limits<double>::max();
-  for (int outerIter = 0; outerIter < config_.ga_mrp_iterations; ++outerIter) {
-    if (getLogLevel() > 1)
-      logger << indentlevel << "GA↔MRP pass " << (outerIter + 1)
-             << " of " << config_.ga_mrp_iterations << " ("
-             << bottlenecks.size() << " bottleneck resources)\n";
+  if (bottlenecks.size() >= 2 && config_.joint_optimization)
+    solveJoint(bottlenecks);
+  else if (bottlenecks.size() == 1)
+    solve(bottlenecks[0], v);
 
-    if (bottlenecks.size() >= 2 && config_.joint_optimization)
-      solveJoint(bottlenecks);
-    else if (bottlenecks.size() == 1)
-      solve(bottlenecks[0], v);
-    else
-      break;
+  if (config_.runMRP) SolverCreate::solve(v);
 
-    if (config_.runMRP) SolverCreate::solve(v);
-
-    if (outerIter > 0 && outerIter < config_.ga_mrp_iterations - 1) {
-      double absDenom = max(abs(prevFitness), 1.0);
-      double improvement = (lastBestFitness_ - prevFitness) / absDenom;
-      if (improvement < config_.ga_mrp_improvement) {
-        if (getLogLevel() > 1)
-          logger << indentlevel << "GA↔MRP converged after "
-                 << (outerIter + 1) << " passes (Δf/|f|="
-                 << improvement << " < " << config_.ga_mrp_improvement
-                 << ")\n";
-        break;
-      }
-    }
-    prevFitness = lastBestFitness_;
-
-    if (outerIter >= config_.ga_mrp_iterations - 1) break;
-
-    vector<const Resource*> newBottlenecks = collectBottlenecks();
-    if (newBottlenecks.size() == bottlenecks.size() && stagnationOccurred_) {
-      bool same = true;
-      for (size_t i = 0; i < newBottlenecks.size(); ++i) {
-        if (newBottlenecks[i] != bottlenecks[i]) {
-          same = false;
-          break;
-        }
-      }
-      if (same) break;
-    }
-    bottlenecks = move(newBottlenecks);
-  }
+  // Unlock ACO-locked plans (inherited from SolverACO::applyBestSolution)
+  for (auto op = OperationPlan::begin(); op != OperationPlan::end(); ++op)
+    op->setAcoLocked(false);
 }
 
 }  // namespace ccAPPS

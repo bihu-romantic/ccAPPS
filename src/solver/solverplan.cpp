@@ -451,7 +451,7 @@ void SolverCreate::SolverData::commit() {
 
     // Operation batching postprocessing when constraints are active.
     // The level-by-level unconstrained plan has its own batch grouping.
-    if (solver->getConstraints() > 0)
+    if (!solver->preserveRawMRPResult() && solver->getConstraints() > 0)
       for (auto& o : Operation::all()) {
         if (cluster == -1 || o.getCluster() == cluster)
           solver->createsBatches(&o, this);
@@ -465,7 +465,8 @@ void SolverCreate::SolverData::commit() {
     demands->clear();
 
     // Clean up excess inventory
-    scanExcess(solver->getPlanType() == 1 && solver->getConstraints() > 0);
+    if (!solver->preserveRawMRPResult())
+      scanExcess(solver->getPlanType() == 1 && solver->getConstraints() > 0);
   } catch (...) {
     // We come in this exception handling code only if there is a problem with
     // with this cluster that goes beyond problems with single orders.

@@ -1209,8 +1209,8 @@ void OperationPlan::setOwner(OperationPlan* o, bool fast) {
 }
 
 void OperationPlan::setStart(Date d, bool force, bool preferEnd) {
-  // Confirmed opplans don't move
-  if (getConfirmed()) {
+  // Confirmed or ACO-locked opplans don't move
+  if (getConfirmed() || getAcoLocked()) {
     if (force) setStartAndEnd(d, getEnd() > d ? getEnd() : d);
     return;
   }
@@ -1257,8 +1257,8 @@ void OperationPlan::setStart(Date d, bool force, bool preferEnd) {
 }
 
 void OperationPlan::setEnd(Date d, bool force) {
-  // Locked opplans don't move
-  if (getConfirmed()) {
+  // Locked or ACO-locked opplans don't move
+  if (getConfirmed() || getAcoLocked()) {
     if (force) setStartAndEnd(getStart() < d ? getStart() : d, d);
     return;
   }

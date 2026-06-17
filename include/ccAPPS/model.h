@@ -2045,6 +2045,8 @@ class OperationPlan : public Object,
 
   bool getNoSetup() const { return (flags & NO_SETUP) != 0; }
 
+  bool getAcoLocked() const { return (flags & ACO_LOCKED) != 0; }
+
   bool getActivated() const { return (flags & ACTIVATED) != 0; }
 
   bool getCompleted() const { return (flags & STATUS_COMPLETED) != 0; }
@@ -2117,6 +2119,13 @@ class OperationPlan : public Object,
     else
       flags &= ~NO_SETUP;
     updateSetupTime();
+  }
+
+  void setAcoLocked(bool b) {
+    if (b)
+      flags |= ACO_LOCKED;
+    else
+      flags &= ~ACO_LOCKED;
   }
 
   /* Update flag which allow/disallows material consumption. */
@@ -2758,6 +2767,7 @@ class OperationPlan : public Object,
   static const unsigned short ACTIVATED = 256;
   static const unsigned short FORCED_UPDATE = 512;
   static const unsigned short NO_SETUP = 1024;
+  static const unsigned short ACO_LOCKED = 2048;
 
   /* Counter of OperationPlans, which is used to automatically assign a
    * unique identifier for each operationplan.
