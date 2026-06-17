@@ -2394,6 +2394,16 @@ def data_management(request):
     commandlist1 = all_commands[:mid]
     commandlist2 = all_commands[mid:]
 
+    # 将导出Excel和导入Excel固定到右侧前两个位置
+    _priority_names = ("exportworkbook", "importworkbook")
+    _priority = [c for c in all_commands if c["command"].name in _priority_names]
+    commandlist1 = [c for c in commandlist1 if c not in _priority]
+    commandlist2 = [c for c in commandlist2 if c not in _priority]
+    commandlist2 = _priority + commandlist2
+    # 将右侧多余项目移回左侧，保持两栏平衡
+    while len(commandlist1) < mid and len(commandlist2) > len(_priority):
+        commandlist1.append(commandlist2.pop())
+
     return render(
         request,
         "execute/data_management.html",
