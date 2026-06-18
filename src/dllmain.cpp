@@ -27,7 +27,7 @@
 #include "ccAPPS.h"
 #include "ccAPPS/database.h"
 #include "ccAPPS/solveraco.h"
-#include "ccAPPS/solverga.h"
+#include "ccAPPS/solverexact.h"
 #include "ccAPPSinterface.h"
 using namespace ccAPPS;
 
@@ -62,8 +62,8 @@ void ccAPPSInitialize(bool procesInitializationFiles) {
         "run_aco", run_aco, METH_NOARGS,
         "Run ACO optimization on all bottleneck resources.");
     PythonInterpreter::registerGlobalMethod(
-        "run_ga", run_ga, METH_NOARGS,
-        "Run GA optimization on all bottleneck resources.");
+        "run_exact", run_exact, METH_NOARGS,
+        "Run exact optimization on small bottleneck resource subproblems.");
 
     // Initialize the forecast module
     int nok = 0;

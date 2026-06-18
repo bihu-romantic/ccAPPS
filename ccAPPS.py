@@ -160,6 +160,7 @@ _corrections = {
     "skill_default": "kill_default",
     "skillIterator": "killIterator",
     "solverACO": "olverACO",
+    "solverExact": "olverExact",
     "solver_delete": "olver_delete",
     "solver_forecast": "olver_forecast",
     "solver_mrp": "olver_mrp",
@@ -174,6 +175,7 @@ _corrections = {
     "loggingIterator": "eggingIterator",
     "problemIterator": "roblemIterator",
     "setupevent": "etupevent",
+    "run_exact": "run_exact",
     # === Alternate names ===
     "alternateOperationIterator": "lternateOperationIterator",
     "alternateResourceIterator": "lternateResourceIterator",

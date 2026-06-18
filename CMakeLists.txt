@@ -62,13 +62,45 @@ add_custom_command(
   COMMAND "${Python3_EXECUTABLE}" -m venv "${PROJECT_SOURCE_DIR}/venv" || cd .
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/requirements.dev.txt" requirements.dev.txt
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/requirements.txt" requirements.txt
-  COMMAND "${Python3_VENV}/pip" install -r requirements.dev.txt
+  COMMAND "${Python3_VENV}/python3" -m pip install -r requirements.dev.txt
   COMMAND ${CMAKE_COMMAND} -E touch venv.stamp
 )
 add_custom_target(venv DEPENDS venv.stamp)
 
 find_program(npm NAMES npm)
 find_program(grunt NAMES grunt)
+
+option(CCAPPS_USE_ORTOOLS "Build the exact solver with OR-Tools support" ON)
+if(CCAPPS_USE_ORTOOLS)
+  set(CCAPPS_LOCAL_ORTOOLS "${PROJECT_SOURCE_DIR}/third_party/or-tools")
+  if(EXISTS "${CCAPPS_LOCAL_ORTOOLS}/lib/cmake/ortools/ortoolsConfig.cmake")
+    list(PREPEND CMAKE_PREFIX_PATH "${CCAPPS_LOCAL_ORTOOLS}")
+  endif()
+  find_package(ortools CONFIG QUIET)
+  if(TARGET ortools::ortools)
+    message(STATUS "OR-Tools found: ${CCAPPS_LOCAL_ORTOOLS}")
+    set(CCAPPS_HAVE_ORTOOLS TRUE)
+    set(ORTOOLS_LIBRARY_DIR "${CCAPPS_LOCAL_ORTOOLS}/lib")
+  else()
+    find_path(
+      ORTOOLS_INCLUDE_DIR
+      ortools/linear_solver/linear_solver.h
+      HINTS "${CCAPPS_LOCAL_ORTOOLS}/include"
+    )
+    find_library(
+      ORTOOLS_LIBRARY
+      NAMES ortools
+      HINTS "${CCAPPS_LOCAL_ORTOOLS}/lib"
+    )
+    if(ORTOOLS_INCLUDE_DIR AND ORTOOLS_LIBRARY)
+      message(STATUS "OR-Tools found without CMake config: ${ORTOOLS_LIBRARY}")
+      set(CCAPPS_HAVE_ORTOOLS TRUE)
+      get_filename_component(ORTOOLS_LIBRARY_DIR "${ORTOOLS_LIBRARY}" DIRECTORY)
+    else()
+      message(STATUS "OR-Tools not found; exact solver will use the built-in fallback")
+    endif()
+  endif()
+endif()
 
 if(grunt)
   add_custom_target(
@@ -338,4 +370,3 @@ if(run-clang-tidy)
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
   )
 endif()
-

@@ -72,11 +72,23 @@ add_library(solver STATIC
   "solver/solverresource.cpp"
   "solver/solveraco.cpp"
   "solver/solverga.cpp"
+  "solver/solverexact.cpp"
   "${CMAKE_SOURCE_DIR}/include/ccAPPS/solver.h"
   "${CMAKE_SOURCE_DIR}/include/ccAPPS/solveraco.h"
   "${CMAKE_SOURCE_DIR}/include/ccAPPS/solverga.h"
+  "${CMAKE_SOURCE_DIR}/include/ccAPPS/solverexact.h"
 )
 add_dependencies(solver model)
+if(CCAPPS_HAVE_ORTOOLS)
+  target_compile_definitions(solver PRIVATE HAVE_ORTOOLS)
+  if(TARGET ortools::ortools)
+    target_link_libraries(solver PUBLIC ortools::ortools)
+  else()
+    target_include_directories(solver PRIVATE "${ORTOOLS_INCLUDE_DIR}")
+    target_compile_definitions(solver PRIVATE OR_PROTO_DLL= USE_SCIP)
+    target_link_libraries(solver PUBLIC "${ORTOOLS_LIBRARY}")
+  endif()
+endif()
 
 add_library(forecast STATIC
   "forecast/exprtk.h"
@@ -106,6 +118,12 @@ target_link_libraries(ccAPPS PUBLIC model)
 target_link_libraries(ccAPPS PUBLIC solver)
 target_link_libraries(ccAPPS PUBLIC xerces-c)
 target_link_libraries(ccAPPS PUBLIC forecast)
+if(CCAPPS_HAVE_ORTOOLS)
+  set_target_properties(ccAPPS PROPERTIES
+    BUILD_RPATH "${ORTOOLS_LIBRARY_DIR}"
+    INSTALL_RPATH "${ORTOOLS_LIBRARY_DIR}"
+  )
+endif()
 
 target_link_libraries(ccAPPS PRIVATE pq)
 # Allow unresolved Python symbols — they resolve from the python binary

@@ -290,7 +290,24 @@ class SupplyPlanning(PlanTask):
             else:
                 logger.info("Solver completed")
             # Run ACO after MRP if enabled
-            if Parameter.getValue("plan.solver", database, "aco").lower() != "heuristic":
+            solver_mode = Parameter.getValue("plan.solver", database, "aco").lower()
+            if solver_mode == "exact":
+                try:
+                    logger.info("Running exact optimization...")
+                    thread2 = Thread(target=ccAPPS.run_exact)
+                    thread2.start()
+                    thread2.join(timeout=120)
+                    if thread2.is_alive():
+                        logger.warning("Exact solver timed out after 120 seconds")
+                    else:
+                        logger.info("Exact solver completed")
+                        try:
+                            cls.solver.commit()
+                        except Exception:
+                            pass
+                except Exception as e:
+                    logger.warning("Exact solver failed: %s" % e)
+            elif solver_mode != "heuristic":
                 try:
                     logger.info("Running ACO optimization...")
                     thread2 = Thread(target=ccAPPS.run_aco)
