@@ -45,6 +45,11 @@ using operations_research::MPVariable;
 
 const MetaClass* SolverExact::metadata;
 
+// ==========================================================================
+// SolverExact Python init
+// ==========================================================================
+
+// Enable/disable the final MRP propagation after exact sequencing.
 static PyObject* solverExact_setRunMRP(PyObject* self, PyObject* args) {
   auto* solver = static_cast<SolverExact*>(self);
   int val;
@@ -53,11 +58,13 @@ static PyObject* solverExact_setRunMRP(PyObject* self, PyObject* args) {
   Py_RETURN_NONE;
 }
 
+// Read the final MRP propagation flag.
 static PyObject* solverExact_getRunMRP(PyObject* self, PyObject*) {
   auto* solver = static_cast<SolverExact*>(self);
   return PyBool_FromLong(solver->getRunMRP() ? 1 : 0);
 }
 
+// Configure purchase material availability for exact/ACO scoring.
 static PyObject* solverExact_setPurchaseMaterialMode(
     PyObject* self, PyObject* args) {
   auto* solver = static_cast<SolverExact*>(self);
@@ -72,14 +79,18 @@ static PyObject* solverExact_setPurchaseMaterialMode(
   Py_RETURN_NONE;
 }
 
+// Read purchase material availability mode.
 static PyObject* solverExact_getPurchaseMaterialMode(PyObject* self, PyObject*) {
   auto* solver = static_cast<SolverExact*>(self);
   return PyLong_FromLong(solver->getPurchaseMaterialMode());
 }
 
+/* Global function: run exact sequencing on constrained resources.
+ * Called from Python as ccAPPS.run_exact(). */
 PyObject* run_exact(PyObject*, PyObject*) {
   SolverExact exact;
   exact.setRunMRP(false);
+  exact.setLogLevel(2);  // Enable diagnostic output
   void* v = nullptr;
   exact.solve(v);
   auto* cmdMgr = exact.getCommandManager();
@@ -125,15 +136,19 @@ PyObject* SolverExact::create(PyTypeObject*, PyObject*, PyObject*) {
   return Object::create<SolverExact>();
 }
 
+// ==========================================================================
+// Exact configuration
+// ==========================================================================
+
 void SolverExact::setConfig(const ExactConfig& cfg) {
   config_ = cfg;
   syncACOConfig();
 }
 
 void SolverExact::syncACOConfig() {
+  // Keep shared ACO helpers aligned: candidates and fitness.
   ACOConfig acoCfg = getConfig();
   acoCfg.runMRP = config_.runMRP;
-  acoCfg.joint_optimization = config_.joint_optimization;
   acoCfg.purchase_material_mode = config_.purchase_material_mode;
   acoCfg.weight_tardiness = config_.weight_tardiness;
   acoCfg.weight_cost = config_.weight_cost;
@@ -143,7 +158,12 @@ void SolverExact::syncACOConfig() {
   SolverACO::setConfig(acoCfg);
 }
 
+// ==========================================================================
+// Candidate resource collection
+// ==========================================================================
+
 vector<const Resource*> SolverExact::collectBottlenecks() const {
+  // Collect constrained resources that have at least 1 manufacturing plan.
   vector<const Resource*> result;
   for (auto res = Resource::begin(); res != Resource::end(); ++res) {
     if (!res->getConstrained()) continue;
@@ -151,154 +171,30 @@ vector<const Resource*> SolverExact::collectBottlenecks() const {
     auto loadplans = res->getLoadPlans();
     for (auto it = loadplans.begin(); it != loadplans.end(); ++it) {
       OperationPlan* op = it->getOperationPlan();
-      if (op && op->getQuantity() > 0.0 &&
+      if (op && op->getOperation() && op->getQuantity() > 0.0 &&
+          !op->getOperation()->hasType<OperationItemSupplier,
+                                       OperationItemDistribution>() &&
           find(plans.begin(), plans.end(), op) == plans.end())
         plans.push_back(op);
     }
-    if (plans.size() >= 2) result.push_back(&*res);
+    if (!plans.empty()) result.push_back(&*res);
   }
   return result;
 }
 
-vector<CandidateOp> SolverExact::buildSingleResourceCandidates(
-    const Resource* res,
-    const vector<OperationPlan*>& plans) const {
-  vector<CandidateOp> candidates;
-  int id = 0;
-  for (auto* op : plans) {
-    CandidateOp c;
-    c.op = op;
-    c.res = res;
-    c.candId = id++;
-    c.earliestStart = earliestStart(op, res);
-    c.allResources.push_back(res);
-    candidates.push_back(c);
-  }
-  return candidates;
-}
-
-void SolverExact::branch(const vector<const Resource*>& resources,
-                         const vector<CandidateOp>& candidates,
-                         size_t targetCount,
-                         ExactSearchState& state) {
-  if (state.aborted) return;
-  state.nodes++;
-  if (state.nodes > config_.max_nodes) {
-    state.aborted = true;
-    return;
-  }
-
-  if (state.scheduled.size() == targetCount) {
-    state.partial.fitness = evaluate(state.partial);
-    if (state.partial.fitness > state.best.fitness) state.best = state.partial;
-    return;
-  }
-
-  vector<const CandidateOp*> ready;
-  for (const auto& c : candidates)
-    if (c.op && !state.scheduled.count(c.op) && !c.allResources.empty())
-      ready.push_back(&c);
-
-  if (ready.empty()) return;
-
-  sort(ready.begin(), ready.end(), [&](const CandidateOp* a,
-                                       const CandidateOp* b) {
-    double pa = heuristic(nullptr, a->op);
-    double pb = heuristic(nullptr, b->op);
-    return pa > pb;
-  });
-
-  for (const CandidateOp* cand : ready) {
-    AntSolution nextPartial = state.partial;
-    unordered_map<const Resource*, const OperationPlan*> nextPrev = state.prevOp;
-    unordered_map<const Resource*, Date> nextTime = state.curTime;
-    ExactSearchState preview = state;
-    if (!appendCandidate(*cand, preview, nextPartial, nextPrev, nextTime))
-      continue;
-
-    ExactSearchState child = state;
-    child.partial = move(nextPartial);
-    child.prevOp = move(nextPrev);
-    child.curTime = move(nextTime);
-    child.scheduled.insert(cand->op);
-    child.best = state.best;
-    branch(resources, candidates, targetCount, child);
-    state.nodes = child.nodes;
-    state.aborted = child.aborted;
-    if (child.best.fitness > state.best.fitness) state.best = child.best;
-    if (state.aborted) return;
-  }
-}
-
-bool SolverExact::appendCandidate(
-    const CandidateOp& candidate,
-    const ExactSearchState& state,
-    AntSolution& nextPartial,
-    unordered_map<const Resource*, const OperationPlan*>& nextPrev,
-    unordered_map<const Resource*, Date>& nextTime) const {
-  if (!candidate.op) return false;
-
-  Date start = candidate.earliestStart;
-  for (auto* r : candidate.allResources) {
-    Duration setup = computeSetupTime(nextPrev[r], candidate.op);
-    start = max(start, nextTime[r] + setup);
-  }
-  const Resource* durationResource = candidate.res ? candidate.res
-                                                  : candidate.allResources[0];
-  Duration dur = estimateOperationDuration(candidate.op, durationResource);
-  Date end;
-  if (candidate.op->getOperation()) {
-    DateRange range = candidate.op->getOperation()->calculateOperationTime(
-        candidate.op, start, dur, true);
-    start = range.getStart();
-    end = range.getEnd();
-  } else {
-    end = start + dur;
-  }
-
-  for (auto* r : candidate.allResources) {
-    nextPartial.sequences[r].push_back(candidate.op);
-    nextPartial.startDates[r].push_back(start);
-    nextPartial.endDates[r].push_back(end);
-    nextPrev[r] = candidate.op;
-    nextTime[r] = end;
-  }
-  nextPartial.selectedResources[candidate.op] = candidate.allResources;
-  nextPartial.selectedLoadAssignments[candidate.op] = candidate.loadAssignments;
-
-  if (state.scheduled.count(candidate.op)) return false;
-  return true;
-}
-
-AntSolution SolverExact::exactSearch(
-    const vector<const Resource*>& resources,
-    const vector<CandidateOp>& candidates) {
-  ExactSearchState state;
-  for (auto* r : resources) {
-    state.prevOp[r] = nullptr;
-    state.curTime[r] = Plan::instance().getCurrent();
-  }
-  state.partial.fitness = -numeric_limits<double>::max();
-  state.best.fitness = -numeric_limits<double>::max();
-
-  if (candidates.size() > static_cast<size_t>(config_.max_operations)) {
-    state.aborted = true;
-    return state.best;
-  }
-
-  unordered_set<const OperationPlan*> uniqueOps;
-  for (const auto& c : candidates)
-    if (c.op) uniqueOps.insert(c.op);
-  size_t targetCount = uniqueOps.size();
-  branch(resources, candidates, targetCount, state);
-  if (state.aborted || state.best.fitness == -numeric_limits<double>::max())
-    return state.best;
-  return state.best;
-}
+// ==========================================================================
+// OR-Tools SCIP time-bucket MIP
+// ==========================================================================
 
 AntSolution SolverExact::solveTimeIndexedMIP(
     const vector<const Resource*>& resources,
     const vector<CandidateOp>& candidates) {
+  // Build and solve an OR-Tools/SCIP time-bucket MIP. If OR-Tools isn't
+  // available, the problem is too large, or SCIP fails to find a feasible
+  // solution, this returns an invalid AntSolution and the MRP result is kept.
+  //
+  // Each binary variable chooses one candidate and one start bucket. Resource
+  // bucket capacity prevents overlaps; pairwise cuts include setup time.
   AntSolution empty;
   empty.fitness = -numeric_limits<double>::max();
 
@@ -308,25 +204,27 @@ AntSolution SolverExact::solveTimeIndexedMIP(
   if (resources.empty() || candidates.empty()) return empty;
   if (candidates.size() > static_cast<size_t>(config_.max_operations))
     return empty;
-  if (getLogLevel() > 0)
-    logger << indentlevel << "Exact MIP: solving " << candidates.size()
-           << " candidates on " << resources.size() << " resources\n";
   int bucketSeconds = max(1, config_.time_bucket_seconds);
   Date current = Plan::instance().getCurrent();
+  unordered_set<const Resource*> resourceSet;
+  for (auto* r : resources) resourceSet.insert(r);
 
   unordered_set<const OperationPlan*> uniqueOps;
   Date horizonEnd = current;
   for (const auto& c : candidates) {
     if (!c.op || c.allResources.empty()) continue;
     uniqueOps.insert(c.op);
-    const Resource* durationResource = c.res ? c.res : c.allResources.front();
+    const Resource* durationResource =
+        c.res ? c.res : c.allResources.front();
     Duration dur = estimateOperationDuration(c.op, durationResource);
-    Date due = Date::infiniteFuture;
-    Demand* dmd = c.op->getTopOwner()->getDemand();
-    if (dmd) due = dmd->getDue();
     Date candidateEnd = c.earliestStart + dur;
-    if (due != Date::infiniteFuture && due > candidateEnd) candidateEnd = due;
-    candidateEnd += Duration(bucketSeconds * 4L);
+    Demand* dmd = c.op->getTopOwner()->getDemand();
+    if (dmd) {
+      Date due = dmd->getDue();
+      if (due != Date::infiniteFuture && due > candidateEnd)
+        candidateEnd = due;
+    }
+    candidateEnd += Duration(static_cast<long>(bucketSeconds) * 4L);
     if (candidateEnd > horizonEnd) horizonEnd = candidateEnd;
   }
   if (uniqueOps.empty() || horizonEnd <= current) return empty;
@@ -335,11 +233,11 @@ AntSolution SolverExact::solveTimeIndexedMIP(
   int bucketCount = static_cast<int>(
       min<long>(max<long>(1, horizonSeconds / bucketSeconds + 1), 240L));
 
-  MPSolver solver("ccapps_exact_time_indexed",
+  // --- Build SCIP MIP ---
+  MPSolver solver("ccapps_exact_time_bucket",
                   MPSolver::SCIP_MIXED_INTEGER_PROGRAMMING);
   if (config_.mip_time_limit_seconds > 0)
     solver.SetTimeLimit(absl::Seconds(config_.mip_time_limit_seconds));
-  const double infinity = solver.infinity();
 
   struct VarSlot {
     const CandidateOp* candidate = nullptr;
@@ -356,12 +254,14 @@ AntSolution SolverExact::solveTimeIndexedMIP(
 
   for (const auto& c : candidates) {
     if (!c.op || c.allResources.empty()) continue;
-    const Resource* durationResource = c.res ? c.res : c.allResources.front();
+    const Resource* durationResource =
+        c.res ? c.res : c.allResources.front();
     Duration dur = estimateOperationDuration(c.op, durationResource);
     int durationBuckets = max(
         1, static_cast<int>((dur.getSeconds() + bucketSeconds - 1) /
                             bucketSeconds));
-    long earliestOffset = max<long>(0, (c.earliestStart - current).getSeconds());
+    long earliestOffset = max<long>(
+        0, (c.earliestStart - current).getSeconds());
     int earliestBucket = static_cast<int>(
         min<long>(bucketCount - 1, earliestOffset / bucketSeconds));
 
@@ -377,17 +277,20 @@ AntSolution SolverExact::solveTimeIndexedMIP(
       }
       if (start == Date::infiniteFuture || end == Date::infiniteFuture)
         continue;
+
       VarSlot slot;
       slot.candidate = &c;
       slot.startBucket = b;
       slot.durationBuckets = durationBuckets;
       slot.start = start;
       slot.end = end;
-      slot.var = solver.MakeBoolVar("x");
+      slot.var = solver.MakeBoolVar("");
       int idx = static_cast<int>(slots.size());
       slots.push_back(slot);
       opSlots[c.op].push_back(idx);
+
       for (auto* r : c.allResources) {
+        if (!resourceSet.count(r)) continue;
         if (!resourceBuckets.count(r)) resourceBuckets[r].resize(bucketCount);
         for (int k = b; k < b + durationBuckets && k < bucketCount; ++k)
           resourceBuckets[r][k].push_back(idx);
@@ -396,6 +299,7 @@ AntSolution SolverExact::solveTimeIndexedMIP(
   }
   if (slots.empty()) return empty;
 
+  // Pick exactly one candidate/start bucket per operation.
   for (auto* op : uniqueOps) {
     auto it = opSlots.find(op);
     if (it == opSlots.end() || it->second.empty()) return empty;
@@ -403,6 +307,7 @@ AntSolution SolverExact::solveTimeIndexedMIP(
     for (int idx : it->second) once->SetCoefficient(slots[idx].var, 1.0);
   }
 
+  // Resource bucket capacity: at most one selected slot per resource bucket.
   for (const auto& kv : resourceBuckets) {
     for (int k = 0; k < bucketCount; ++k) {
       if (kv.second[k].empty()) continue;
@@ -411,10 +316,119 @@ AntSolution SolverExact::solveTimeIndexedMIP(
     }
   }
 
-  MPObjective* objective = solver.MutableObjective();
-  objective->SetMinimization();
-  for (size_t i = 0; i < slots.size(); ++i) {
-    const CandidateOp* c = slots[i].candidate;
+  // Pairwise setup cuts for slots sharing a resource.
+  for (size_t a = 0; a < slots.size(); ++a) {
+    for (size_t b = a + 1; b < slots.size(); ++b) {
+      const CandidateOp* ca = slots[a].candidate;
+      const CandidateOp* cb = slots[b].candidate;
+      if (!ca || !cb || ca->op == cb->op) continue;
+      bool shareResource = false;
+      for (auto* ra : ca->allResources) {
+        if (!resourceSet.count(ra)) continue;
+        for (auto* rb : cb->allResources) {
+          if (ra == rb) {
+            shareResource = true;
+            break;
+          }
+        }
+        if (shareResource) break;
+      }
+      if (!shareResource) continue;
+
+      Duration setupAB = computeSetupTime(ca->op, cb->op);
+      Duration setupBA = computeSetupTime(cb->op, ca->op);
+      bool aBeforeB = slots[a].end + setupAB <= slots[b].start;
+      bool bBeforeA = slots[b].end + setupBA <= slots[a].start;
+      if (!aBeforeB && !bBeforeA) {
+        MPConstraint* cut = solver.MakeRowConstraint(0.0, 1.0);
+        cut->SetCoefficient(slots[a].var, 1.0);
+        cut->SetCoefficient(slots[b].var, 1.0);
+      }
+    }
+  }
+
+  // Material balance by buffer and time bucket. Quantities come directly from
+  // FlowPlans, so BOM-scaled consumption such as 20 chairs * 4 legs is enforced
+  // as an actual quantity requirement. The lower bound is the buffer minimum
+  // inventory target, using the minimum calendar when one is defined.
+  unordered_set<const Buffer*> materialBuffers;
+  for (auto* op : uniqueOps) {
+    if (!op) continue;
+    for (auto fp = op->beginFlowPlans(); fp != op->endFlowPlans(); ++fp) {
+      const Buffer* buf = fp->getBuffer();
+      if (buf && fabs(fp->getQuantity()) > ROUNDING_ERROR)
+        materialBuffers.insert(buf);
+    }
+  }
+
+  for (const Buffer* buf : materialBuffers) {
+    vector<double> external(bucketCount, 0.0);
+    external[0] += buf->getOnHand(current, false);
+
+    for (auto fp = buf->getFlowPlans().begin();
+         fp != buf->getFlowPlans().end(); ++fp) {
+      OperationPlan* fpOp = fp->getOperationPlan();
+      if (fpOp && uniqueOps.count(fpOp)) continue;
+      if (fpOp && fpOp->getOperation() &&
+          fpOp->getOperation()->hasType<OperationItemSupplier,
+                                       OperationItemDistribution>())
+        continue;
+      if (fp->getDate() == Date::infiniteFuture) continue;
+      if (fabs(fp->getQuantity()) <= ROUNDING_ERROR) continue;
+
+      long offset = (fp->getDate() - current).getSeconds();
+      int bucket = offset <= 0
+          ? 0
+          : static_cast<int>(
+                min<long>(bucketCount - 1, offset / bucketSeconds));
+      external[bucket] += fp->getQuantity();
+    }
+
+    double cumulativeExternal = 0.0;
+    for (int bucket = 0; bucket < bucketCount; ++bucket) {
+      cumulativeExternal += external[bucket];
+      Date bucketDate = current + Duration(
+          static_cast<long>(bucket) * static_cast<long>(bucketSeconds));
+      double minimumInventory = buf->getMinimum();
+      Calendar* minimumCalendar = buf->getMinimumCalendar();
+      if (minimumCalendar) {
+        CalendarBucket* minimumBucket =
+            minimumCalendar->findBucket(bucketDate, true);
+        minimumInventory = minimumBucket ? minimumBucket->getValue()
+                                         : minimumCalendar->getDefault();
+      }
+      if (minimumInventory < 0.0) minimumInventory = 0.0;
+      MPConstraint* balance =
+          solver.MakeRowConstraint(minimumInventory - cumulativeExternal,
+                                   solver.infinity());
+
+      for (size_t idx = 0; idx < slots.size(); ++idx) {
+        const CandidateOp* c = slots[idx].candidate;
+        if (!c || !c->op) continue;
+        double quantityThroughBucket = 0.0;
+        for (auto fp = c->op->beginFlowPlans();
+             fp != c->op->endFlowPlans(); ++fp) {
+          if (fp->getBuffer() != buf ||
+              fabs(fp->getQuantity()) <= ROUNDING_ERROR)
+            continue;
+          int eventBucket = fp->getQuantity() < 0.0
+              ? slots[idx].startBucket
+              : min(bucketCount - 1,
+                    slots[idx].startBucket + slots[idx].durationBuckets);
+          if (eventBucket <= bucket)
+            quantityThroughBucket += fp->getQuantity();
+        }
+        if (fabs(quantityThroughBucket) > ROUNDING_ERROR)
+          balance->SetCoefficient(slots[idx].var, quantityThroughBucket);
+      }
+    }
+  }
+
+  // Objective: minimize weighted tardiness and cost for selected slots.
+  MPObjective* obj = solver.MutableObjective();
+  obj->SetMinimization();
+  for (const auto& slot : slots) {
+    const CandidateOp* c = slot.candidate;
     const Resource* res = c->res ? c->res : c->allResources.front();
     double priorityFactor = 1.0;
     Demand* dmd = c->op->getTopOwner()->getDemand();
@@ -424,126 +438,157 @@ AntSolution SolverExact::solveTimeIndexedMIP(
     }
     double tardiness = 0.0;
     if (dmd && dmd->getDue() != Date::infiniteFuture &&
-        slots[i].end > dmd->getDue())
+        slot.end > dmd->getDue())
       tardiness = static_cast<double>(
-          (slots[i].end - dmd->getDue()).getSeconds()) / 3600.0;
+          (slot.end - dmd->getDue()).getSeconds()) / 3600.0;
     double durationHours = static_cast<double>(
-        (slots[i].end - slots[i].start).getSeconds()) / 3600.0;
+        (slot.end - slot.start).getSeconds()) / 3600.0;
     double cost = c->op->getOperation()->getCost() * c->op->getQuantity() +
                   res->getCost() * max(0.0, durationHours);
-    objective->SetCoefficient(
-        slots[i].var,
+    double compactness = static_cast<double>(slot.startBucket) * 0.001;
+    obj->SetCoefficient(
+        slot.var,
         config_.weight_tardiness * tardiness * priorityFactor +
-            config_.weight_cost * cost);
+            config_.weight_cost * cost + compactness);
   }
 
+  // Solve
+  logger << indentlevel << "Exact time-bucket MIP: " << uniqueOps.size()
+         << " ops, " << slots.size() << " binary vars, "
+         << bucketCount << " buckets of " << bucketSeconds << " seconds\n";
+
   MPSolver::ResultStatus status = solver.Solve();
-  if (status != MPSolver::OPTIMAL && status != MPSolver::FEASIBLE)
+  logger << indentlevel << "Exact time-bucket MIP SCIP status="
+         << static_cast<int>(status);
+  if (status == MPSolver::OPTIMAL || status == MPSolver::FEASIBLE)
+    logger << " objective=" << obj->Value();
+  logger << "\n";
+
+  if (status != MPSolver::OPTIMAL && status != MPSolver::FEASIBLE) {
+    logger << indentlevel << "Exact time-bucket MIP: no feasible solution\n";
     return empty;
+  }
 
   AntSolution result;
   unordered_set<const OperationPlan*> scheduled;
-  for (const auto& slot : slots) {
-    if (slot.var->solution_value() < 0.5) continue;
-    const CandidateOp* c = slot.candidate;
+  vector<const VarSlot*> selected;
+  for (const auto& slot : slots)
+    if (slot.var->solution_value() > 0.5) selected.push_back(&slot);
+  sort(selected.begin(), selected.end(), [](const VarSlot* a,
+                                            const VarSlot* b) {
+    return a->start < b->start;
+  });
+  for (const auto* slot : selected) {
+    const CandidateOp* c = slot->candidate;
     if (!c || !c->op || scheduled.count(c->op)) continue;
     for (auto* r : c->allResources) {
       result.sequences[r].push_back(c->op);
-      result.startDates[r].push_back(slot.start);
-      result.endDates[r].push_back(slot.end);
+      result.startDates[r].push_back(slot->start);
+      result.endDates[r].push_back(slot->end);
     }
     result.selectedResources[c->op] = c->allResources;
     result.selectedLoadAssignments[c->op] = c->loadAssignments;
     scheduled.insert(c->op);
   }
   result.fitness = evaluate(result);
+  logger << indentlevel << "Exact time-bucket MIP: scheduled "
+         << scheduled.size()
+         << " ops, fitness=" << result.fitness << "\n";
   return result;
 #endif
 }
 
-void SolverExact::solveWithAcoFallback(void* v) {
-  if (!config_.fallback_to_aco) return;
-  SolverACO::solve(v);
-}
+// ==========================================================================
+// Keep MRP result
+// ==========================================================================
 
-void SolverExact::solve(const Resource* res, void* v) {
-  vector<OperationPlan*> plans;
-  auto loadplans = res->getLoadPlans();
-  for (auto it = loadplans.begin(); it != loadplans.end(); ++it) {
-    OperationPlan* op = it->getOperationPlan();
-    if (op && op->getQuantity() > 0.0 &&
-        find(plans.begin(), plans.end(), op) == plans.end())
-      plans.push_back(op);
-  }
-  if (plans.size() < 2) {
-    SolverCreate::solve(res, v);
-    return;
-  }
-
-  vector<const Resource*> resources{res};
-  vector<CandidateOp> candidates = buildSingleResourceCandidates(res, plans);
-  if (candidates.size() > static_cast<size_t>(config_.max_operations)) {
-    solveWithAcoFallback(v);
-    return;
-  }
-  AntSolution best;
-  best.fitness = -numeric_limits<double>::max();
-  if (config_.prefer_mip) best = solveTimeIndexedMIP(resources, candidates);
-  if (best.fitness == -numeric_limits<double>::max())
-    best = exactSearch(resources, candidates);
-  if (best.fitness == -numeric_limits<double>::max()) {
-    solveWithAcoFallback(v);
-    return;
-  }
-  applyBestSolution(best);
-  if (getLogLevel() > 0)
-    logger << indentlevel << "Exact on '" << res->getName()
-           << "': " << plans.size() << " plans, fitness=" << best.fitness
-           << "\n";
+void SolverExact::keepMRPResult(const char* reason) const {
+  // Exact methods are bounded; if they fail, leave the MRP plan untouched.
+  if (getLogLevel() < 0) return;
+  logger << indentlevel << "Exact: keep MRP result";
+  if (reason) logger << " (" << reason << ")";
+  logger << "\n";
 }
 
 void SolverExact::solveJoint(const vector<const Resource*>& resources) {
+  // Optimize all candidate resources as one coupled problem.
   if (resources.empty()) return;
+  if (getLogLevel() >= 0)
+    logger << indentlevel << "Exact joint: buildCandidates start, resources="
+           << resources.size() << "\n";
   vector<CandidateOp> candidates = buildCandidates(resources);
+  if (getLogLevel() >= 0)
+    logger << indentlevel << "Exact joint: " << candidates.size()
+           << " candidates across " << resources.size() << " resources\n";
+
   if (candidates.size() < 2) return;
   if (candidates.size() > static_cast<size_t>(config_.max_operations)) {
-    solveWithAcoFallback(nullptr);
+    if (getLogLevel() >= 0)
+      logger << indentlevel << "Exact joint: too many candidates\n";
+    keepMRPResult("joint candidate limit exceeded");
     return;
   }
+
+  // --- Tier 1: Joint MIP over all resources ---
   AntSolution best;
   best.fitness = -numeric_limits<double>::max();
-  if (config_.prefer_mip) best = solveTimeIndexedMIP(resources, candidates);
-  if (best.fitness == -numeric_limits<double>::max())
-    best = exactSearch(resources, candidates);
+  if (config_.prefer_mip) {
+    best = solveTimeIndexedMIP(resources, candidates);
+    if (best.fitness != -numeric_limits<double>::max())
+      logger << indentlevel << "Exact joint MIP: solved with fitness="
+             << best.fitness << "\n";
+  }
+
+  // --- Tier 2: keep MRP result ---
   if (best.fitness == -numeric_limits<double>::max()) {
-    solveWithAcoFallback(nullptr);
+    if (getLogLevel() >= 0)
+      logger << indentlevel << "Exact joint MIP: no feasible solution\n";
+    keepMRPResult("joint MIP disabled or failed");
     return;
   }
+
   applyBestSolution(best);
-  if (getLogLevel() > 0)
-    logger << indentlevel << "Exact joint: " << resources.size()
+  exactApplied_ = true;
+  if (getLogLevel() >= 0)
+    logger << indentlevel << "Exact joint: applied " << resources.size()
            << " resources, " << candidates.size()
            << " candidates, fitness=" << best.fitness << "\n";
 }
 
+// ==========================================================================
+// Main exact flow
+// ==========================================================================
+
 void SolverExact::solve(void* v) {
+  // Top-level flow:
+  //   1. refresh inherited ACO settings
+  //   2. collect candidate resources from the current LoadPlans
+  //   3. run one exact optimization pass
+  //   4. if exact changed the schedule, optionally run one locked MRP pass
+  //   5. always clear AcoLocked, even when MRP throws
+  //
+  // There is intentionally no Exact -> MRP -> Exact loop here.
   syncACOConfig();
+  exactApplied_ = false;
   vector<const Resource*> bottlenecks = collectBottlenecks();
   if (getLogLevel() >= 0)
     logger << indentlevel << "Exact: entry, found " << bottlenecks.size()
-           << " bottleneck resources\n";
+           << " candidate resources\n";
 
   if (bottlenecks.empty()) {
     if (config_.runMRP) SolverCreate::solve(v);
     return;
   }
 
-  if (bottlenecks.size() >= 2 && config_.joint_optimization)
-    solveJoint(bottlenecks);
-  else if (bottlenecks.size() == 1)
-    solve(bottlenecks[0], v);
+  solveJoint(bottlenecks);
 
-  if (config_.runMRP) SolverCreate::solve(v);
+  try {
+    if (exactApplied_ && config_.runMRP) SolverCreate::solve(v);
+  } catch (...) {
+    for (auto op = OperationPlan::begin(); op != OperationPlan::end(); ++op)
+      op->setAcoLocked(false);
+    throw;
+  }
   for (auto op = OperationPlan::begin(); op != OperationPlan::end(); ++op)
     op->setAcoLocked(false);
 }

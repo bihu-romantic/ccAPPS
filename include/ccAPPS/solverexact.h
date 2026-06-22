@@ -39,18 +39,15 @@ namespace ccAPPS {
  *
  * The exact solver optimizes the same candidate model and fitness function as
  * ACO, but searches the complete assignment/sequence space for small
- * bottleneck subproblems. Larger problems can fall back to ACO to keep runtime
- * bounded in production planning runs.
+ * bottleneck subproblems. Larger or infeasible problems keep the current MRP
+ * result unchanged.
  */
 struct ExactConfig {
   bool runMRP = true;
-  bool joint_optimization = true;
-  bool fallback_to_aco = true;
   int purchase_material_mode = 1;
-  int max_operations = 10;
-  long max_nodes = 200000;
+  int max_operations = 500;
   bool prefer_mip = true;
-  int time_bucket_seconds = 3600;
+  int time_bucket_seconds = 900;
   int mip_time_limit_seconds = 30;
 
   double weight_tardiness = 1.0;
@@ -83,9 +80,11 @@ class SolverExact : public SolverACO {
   int getPurchaseMaterialMode() const { return config_.purchase_material_mode; }
 
   void solve(void* v = nullptr) override;
-  void solve(const Resource* res, void* v = nullptr) override;
   void solveJoint(const vector<const Resource*>& resources);
 
+  void solve(const Resource* r, void* v = nullptr) override {
+    SolverCreate::solve(r, v);
+  }
   void solve(const ResourceInfinite* r, void* v = nullptr) override {
     SolverCreate::solve(r, v);
   }
@@ -94,41 +93,15 @@ class SolverExact : public SolverACO {
   }
 
  private:
-  struct ExactSearchState {
-    unordered_map<const Resource*, const OperationPlan*> prevOp;
-    unordered_map<const Resource*, Date> curTime;
-    unordered_set<const OperationPlan*> scheduled;
-    AntSolution partial;
-    AntSolution best;
-    long nodes = 0;
-    bool aborted = false;
-  };
-
   void syncACOConfig();
   vector<const Resource*> collectBottlenecks() const;
-  vector<CandidateOp> buildSingleResourceCandidates(
-      const Resource* res,
-      const vector<OperationPlan*>& plans) const;
-  AntSolution exactSearch(
-      const vector<const Resource*>& resources,
-      const vector<CandidateOp>& candidates);
   AntSolution solveTimeIndexedMIP(
       const vector<const Resource*>& resources,
       const vector<CandidateOp>& candidates);
-  void branch(
-      const vector<const Resource*>& resources,
-      const vector<CandidateOp>& candidates,
-      size_t targetCount,
-      ExactSearchState& state);
-  bool appendCandidate(
-      const CandidateOp& candidate,
-      const ExactSearchState& state,
-      AntSolution& nextPartial,
-      unordered_map<const Resource*, const OperationPlan*>& nextPrev,
-      unordered_map<const Resource*, Date>& nextTime) const;
-  void solveWithAcoFallback(void* v);
+  void keepMRPResult(const char* reason) const;
 
   ExactConfig config_;
+  bool exactApplied_ = false;
 };
 
 PyObject* run_exact(PyObject*, PyObject*);

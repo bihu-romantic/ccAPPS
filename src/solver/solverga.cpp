@@ -571,7 +571,13 @@ void SolverGA::solve(void* v) {
   else if (bottlenecks.size() == 1)
     solve(bottlenecks[0], v);
 
-  if (config_.runMRP) SolverCreate::solve(v);
+  try {
+    if (config_.runMRP) SolverCreate::solve(v);
+  } catch (...) {
+    for (auto op = OperationPlan::begin(); op != OperationPlan::end(); ++op)
+      op->setAcoLocked(false);
+    throw;
+  }
 
   // Unlock ACO-locked plans (inherited from SolverACO::applyBestSolution)
   for (auto op = OperationPlan::begin(); op != OperationPlan::end(); ++op)

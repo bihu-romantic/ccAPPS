@@ -1498,9 +1498,14 @@ vector<const Resource*> bottleneck = collectBottlenecks();
   else if (bottleneck.size() == 1)
     solve(bottleneck[0], v);
 
-  // ---- Phase 2: Material propagation ----
-  if (config_.runMRP)
-    SolverCreate::solve(v);
+  try {
+    // ---- Phase 2: Material propagation ----
+    if (config_.runMRP) SolverCreate::solve(v);
+  } catch (...) {
+    for (auto op = OperationPlan::begin(); op != OperationPlan::end(); ++op)
+      op->setAcoLocked(false);
+    throw;
+  }
 
   // ---- Unlock ACO-optimized plans ----
   for (auto op = OperationPlan::begin(); op != OperationPlan::end(); ++op)
