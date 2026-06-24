@@ -2588,7 +2588,7 @@ msgstr "发布：您将丢失此场景中的所有数据！"
 
 #: execute/templates/commands/scenario_copy.html:76
 msgid "Promote: All data will be copied to Production"
-msgstr "提升：所有数据将被复制到生产环境"
+msgstr "升级：将所有数据复制到生产环境"
 
 #: execute/templates/commands/scheduletasks.html:5
 msgid "Run a sequence of tasks, and schedule it to run automatically."

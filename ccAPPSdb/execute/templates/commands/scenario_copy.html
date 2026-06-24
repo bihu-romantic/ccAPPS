@@ -11,10 +11,10 @@
 <table id="scenarios" style="width:100%" class="w-100 ">
   <tr>
       <td colspan='5' style="padding-left:15px">
-        <p>{% blocktrans %}You have a number of available scenario databases available.<br>
-        You can copy data into a scenario database to create a isolated sandbox for what-if analysis.<br>
-        Use the dropdown in the upper right corner of the screen to select which scenario you're working in.
-        {% endblocktrans %}</p>
+        <p>您有多个可用的场景数据库。<br>
+        可以将数据复制到场景数据库中，创建独立的沙盒环境进行模拟分析。<br>
+        使用屏幕右上角的下拉菜单选择要操作的场景。
+        </p>
       </td>
   </tr>
   <tr>
@@ -113,12 +113,12 @@
   <td colspan="{% if THEMES|length > 1 %}5{% else %}4{% endif %}" style="padding: 10px; text-align: left;">
       <button id="addScenarioBtn" class="btn btn-sm btn-primary" 
         data-bs-toggle="tooltip" data-bs-placement="right" data-bs-offset="0,5"
-        data-bs-title="{% blocktranslate %}Add a new scenario (max {{ max_scenarios }}){% endblocktranslate %}">
+        data-bs-title="新增场景 (最多 {{ max_scenarios }})">
         <i class="fa fa-plus"></i>
       </button>
       <button id="removeScenarioBtn" class="btn btn-sm btn-primary"
         data-bs-toggle="tooltip" data-bs-placement="right" data-bs-offset="0,5"
-        data-bs-title="{% trans 'Remove the last scenario' %}">
+        data-bs-title="删除最后一个场景">
         <i class="fa fa-minus"></i>
       </button>
   </td>
