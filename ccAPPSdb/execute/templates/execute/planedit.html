@@ -165,7 +165,28 @@
   justify-content: center;
   border-radius: 4px;
 }
-.pe-autofix-icon { font-size: 13px; line-height: 1; display: inline-block; transform: rotate(-90deg); }
+.pe-autofix-gears {
+  position: relative;
+  width: 18px; height: 18px;
+  display: inline-block;
+  color: #212529;
+}
+.pe-autofix-gear {
+  position: absolute;
+  line-height: 1;
+}
+.pe-autofix-gear-main {
+  left: 1px; top: 5px;
+  font-size: 12px;
+}
+.pe-autofix-gear-small-top {
+  right: 1px; top: 2px;
+  font-size: 8px;
+}
+.pe-autofix-gear-small-bottom {
+  right: 1px; bottom: 1px;
+  font-size: 8px;
+}
 .pe-autofix-slash {
   position: absolute; top: 0; left: 0; right: 0; bottom: 0;
   pointer-events: none;
@@ -720,6 +741,19 @@ function _extractErrorMessage(resp, fallback) {
     });
 }
 
+function _getCsrfToken() {
+    if (typeof getCookie === "function") return getCookie("csrftoken") || "";
+    var input = document.querySelector('input[name="csrfmiddlewaretoken"]');
+    if (input && input.value) return input.value;
+    var name = "csrftoken=";
+    var cookies = decodeURIComponent(document.cookie || "").split(";");
+    for (var i = 0; i < cookies.length; i++) {
+        var cookie = cookies[i].trim();
+        if (cookie.indexOf(name) === 0) return cookie.substring(name.length);
+    }
+    return "";
+}
+
 function _formatDisplayDate(v) {
     if (!v) return "-";
     var d = new Date(v);
@@ -774,15 +808,21 @@ function _autoFixConflicts() {
     btn.classList.add("pe-autofix-active");
     var saveFirst = (_isEditStateDirty() || _peResourceDirty) ? _saveEditState(false) : Promise.resolve();
     saveFirst.then(function() {
-        return fetch("/execute/autoresolve/", {
+        return fetch(url_prefix + "/execute/autoresolve/", {
             method: "POST",
+            credentials: "same-origin",
             headers: {"Content-Type": "application/json", "X-CSRFToken": _getCsrfToken()},
             body: JSON.stringify({operationplans: _peAutoFixScopeRefs})
         });
     })
-    .then(function(r) { return r.json(); })
+    .then(function(r) {
+        if (r.ok) return r.json();
+        return _extractErrorMessage(r, "自动修复失败").then(function(msg) {
+            throw new Error(msg);
+        });
+    })
     .then(function(data) {
-        if (data.success) { alert(data.message); location.reload(); }
+        if (data.success) { location.reload(); }
         else { alert("冲突解决失败: " + (data.error || "未知错误")); }
     })
     .catch(function(err) { alert("请求失败: " + (err.message || err)); })
@@ -4030,7 +4070,7 @@ function onTypeFilterChange() {
 
 {% block actions %}
 <div style="display:flex;align-items:center;justify-content:flex-end;width:100%;gap:4px">
-    <button id="pe-top-autofix-btn" class="btn pe-autofix-btn" onclick="_autoFixConflicts()" data-bs-toggle="tooltip" data-bs-placement="top" title="自动解决冲突"><span class="fa fa-wrench pe-autofix-icon"></span><span id="pe-autofix-slash" class="pe-autofix-slash"></span></button>
+    <button id="pe-top-autofix-btn" class="btn pe-autofix-btn" onclick="_autoFixConflicts()" data-bs-toggle="tooltip" data-bs-placement="top" title="自动解决冲突"><span class="pe-autofix-gears"><span class="fa fa-cog pe-autofix-gear pe-autofix-gear-main"></span><span class="fa fa-cog pe-autofix-gear pe-autofix-gear-small-top"></span><span class="fa fa-cog pe-autofix-gear pe-autofix-gear-small-bottom"></span></span><span id="pe-autofix-slash" class="pe-autofix-slash"></span></button>
     <button class="btn btn-primary" id="rg-zoom-in" onclick="zoomCombinedGantt(1.3)" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="{% trans 'zoom in'|force_escape %}"><span class="fa fa-search-plus"></span></button>
     <button class="btn btn-primary" id="rg-zoom-out" onclick="zoomCombinedGantt(0.7)" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="{% trans 'zoom out'|force_escape %}"><span class="fa fa-search-minus"></span></button>
     <div style="position:relative;display:inline-block">
