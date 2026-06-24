@@ -27,6 +27,7 @@
 #ifndef SOLVERACO_H
 #define SOLVERACO_H
 
+#include <atomic>
 #include <cmath>
 #include <random>
 #include <unordered_map>
@@ -209,6 +210,7 @@ class SolverACO : public SolverCreate {
   mt19937 rng_;
   double lastBestFitness_ = -numeric_limits<double>::max();
   bool stagnationOccurred_ = false;
+  atomic<bool> mrpRefreshInProgress_{false};
 };
 
 /* Global function exposed to Python as ccAPPS.run_aco(). */

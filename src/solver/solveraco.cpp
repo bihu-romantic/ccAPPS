@@ -1321,8 +1321,9 @@ bool SolverACO::shouldLockOptimizedPlan(const OperationPlan* op) const {
 
 void SolverACO::lockOptimizedPlan(OperationPlan* op) {
   if (!op) return;
+  if (shouldLockOptimizedPlan(op)) op->setAcoLocked(true);
   auto* top = op->getTopOwner();
-  if (shouldLockOptimizedPlan(top)) top->setAcoLocked(true);
+  if (top != op && shouldLockOptimizedPlan(top)) top->setAcoLocked(true);
 }
 
 // ==========================================================================
@@ -1349,6 +1350,11 @@ static void collectResourcePlans(const Resource* res,
 // ==========================================================================
 
 void SolverACO::solve(const Resource* res, void* v) {
+  if (mrpRefreshInProgress_) {
+    SolverCreate::solve(res, v);
+    return;
+  }
+
   vector<OperationPlan*> plans;
   collectResourcePlans(res, plans);
   if (plans.size() < 2) { SolverCreate::solve(res, v); return; }
@@ -1514,8 +1520,13 @@ vector<const Resource*> bottleneck = collectBottlenecks();
 
   try {
     // ---- Phase 2: Material propagation ----
-    if (config_.runMRP) SolverCreate::solve(v);
+    if (config_.runMRP) {
+      mrpRefreshInProgress_ = true;
+      SolverCreate::solve(v);
+      mrpRefreshInProgress_ = false;
+    }
   } catch (...) {
+    mrpRefreshInProgress_ = false;
     for (auto op = OperationPlan::begin(); op != OperationPlan::end(); ++op)
       op->setAcoLocked(false);
     throw;
