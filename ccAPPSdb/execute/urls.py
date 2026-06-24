@@ -44,6 +44,11 @@ if mode == "WSGI":
             name="execute_planningboard",
         ),
         re_path(
+            r"^execute/autoresolve/$",
+            views.auto_resolve_conflicts,
+            name="execute_autoresolve",
+        ),
+        re_path(
             r"^execute/gantt/embed/$",
             views.GanttEmbed.as_view(),
             name="execute_gantt_embed",

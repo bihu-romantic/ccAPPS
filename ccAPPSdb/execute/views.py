@@ -1780,6 +1780,77 @@ def exports(request):
 from ccAPPSdb.input.models.operationplan import OperationPlan
 
 
+def auto_resolve_conflicts(request):
+    """AJAX endpoint: set solver=autofix in DB, trigger re-plan, return counts."""
+    import json
+    from django.http import JsonResponse
+    from django.core import management
+    from ccAPPSdb.common.models import Parameter
+
+    if request.method != "POST":
+        return JsonResponse({"error": "POST required"}, status=405)
+
+    database = request.META.get("ccAPPS_DATABASE", "scenario6")
+    try:
+        from django.db import connections
+        try:
+            payload = json.loads(request.body.decode(request.encoding or "utf-8") or "{}")
+        except Exception:
+            payload = {}
+        raw_scope = payload.get("operationplans", [])
+        if isinstance(raw_scope, str):
+            raw_scope = [raw_scope]
+        scope_refs = []
+        for ref in raw_scope:
+            ref = str(ref or "").strip()
+            if ref and ref not in scope_refs and len(scope_refs) < 50:
+                scope_refs.append(ref)
+        if scope_refs:
+            valid_refs = set(
+                OperationPlan.objects.using(database)
+                .filter(reference__in=scope_refs)
+                .values_list("reference", flat=True)
+            )
+            scope_refs = [ref for ref in scope_refs if ref in valid_refs]
+
+        with connections[database].cursor() as cur:
+            cur.execute("SELECT count(*) FROM out_problem")
+            before_total = cur.fetchone()[0]
+
+        # Set solver mode in database so the subprocess picks it up
+        old_solver = Parameter.getValue("plan.solver", database, "heuristic")
+        p, _ = Parameter.objects.using(database).update_or_create(
+            pk="plan.solver", defaults={"value": "autofix"})
+        p.save(using=database)
+
+        try:
+            # Run plan with auto-fix
+            env_parts = ["autofix_first=1", "autofix_max_iterations=3"]
+            if scope_refs:
+                env_parts.append("autofix_scope=%s" % "|".join(scope_refs))
+            env = ",".join(env_parts)
+            management.call_command(
+                "runplan", database=database, constraint="capa,mfg_lt,po_lt",
+                plantype=1, env=env, background=True, verbosity=0)
+        finally:
+            p.value = old_solver
+            p.save(using=database)
+
+        with connections[database].cursor() as cur:
+            cur.execute("SELECT count(*) FROM out_problem")
+            after_total = cur.fetchone()[0]
+
+        return JsonResponse({
+            "success": True,
+            "before_total": before_total,
+            "after_total": after_total,
+            "scope_count": len(scope_refs),
+            "message": "自动修复重排完成。作用域工单: %d，问题数: %d → %d" % (len(scope_refs), before_total, after_total)
+        })
+    except Exception as e:
+        return JsonResponse({"success": False, "error": str(e)}, status=500)
+
+
 class PlanEdit(GridReport):
     """Consolidated plan review and editing view across all operation plan types."""
 

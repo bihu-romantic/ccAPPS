@@ -280,7 +280,44 @@ class SupplyPlanning(PlanTask):
                 ccAPPS.settings.loglimit = 300000
             from threading import Thread
 
-            thread = Thread(target=cls.solver.solve)
+            def unlock_aco_locked():
+                try:
+                    for op in ccAPPS.operationplans():
+                        if op.getAcoLocked():
+                            op.setAcoLocked(False)
+                except Exception as e:
+                    logger.warning("Failed to unlock auto-fix locks: %s" % e)
+
+            autofix_first = os.environ.get("autofix_first", "").lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+            if autofix_first:
+                try:
+                    logger.info("Running scoped auto-fix before MRP refresh...")
+                    thread0 = Thread(target=ccAPPS.fix_conflicts)
+                    thread0.start()
+                    thread0.join(timeout=120)
+                    if thread0.is_alive():
+                        logger.warning("Pre-MRP auto-fix timed out after 120 seconds")
+                    else:
+                        logger.info("Pre-MRP auto-fix completed")
+                        try:
+                            cls.solver.commit()
+                        except Exception:
+                            pass
+                except Exception as e:
+                    logger.warning("Pre-MRP auto-fix failed: %s" % e)
+
+            def solve_with_optional_unlock():
+                try:
+                    cls.solver.solve()
+                finally:
+                    if autofix_first:
+                        unlock_aco_locked()
+
+            thread = Thread(target=solve_with_optional_unlock)
             thread.start()
             thread.join(timeout=300)
             if thread.is_alive():
@@ -289,9 +326,27 @@ class SupplyPlanning(PlanTask):
                 )
             else:
                 logger.info("Solver completed")
-            # Run ACO after MRP if enabled
-            solver_mode = Parameter.getValue("plan.solver", database, "aco").lower()
-            if solver_mode == "exact":
+            # Run ACO/Exact/AutoFix after MRP if enabled
+            solver_mode = Parameter.getValue("plan.solver", database, "heuristic").lower()
+            if autofix_first:
+                logger.info("Skipping post-MRP optimization after pre-MRP auto-fix")
+            elif solver_mode == "autofix":
+                try:
+                    logger.info("Running auto-fix conflict resolution...")
+                    thread2 = Thread(target=ccAPPS.fix_conflicts)
+                    thread2.start()
+                    thread2.join(timeout=120)
+                    if thread2.is_alive():
+                        logger.warning("Auto-fix timed out after 120 seconds")
+                    else:
+                        logger.info("Auto-fix completed")
+                        try:
+                            cls.solver.commit()
+                        except Exception:
+                            pass
+                except Exception as e:
+                    logger.warning("Auto-fix failed: %s" % e)
+            elif solver_mode == "exact":
                 try:
                     logger.info("Running exact optimization...")
                     thread2 = Thread(target=ccAPPS.run_exact)

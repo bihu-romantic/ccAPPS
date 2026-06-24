@@ -73,10 +73,12 @@ add_library(solver STATIC
   "solver/solveraco.cpp"
   "solver/solverga.cpp"
   "solver/solverexact.cpp"
+  "solver/solverautofix.cpp"
   "${CMAKE_SOURCE_DIR}/include/ccAPPS/solver.h"
   "${CMAKE_SOURCE_DIR}/include/ccAPPS/solveraco.h"
   "${CMAKE_SOURCE_DIR}/include/ccAPPS/solverga.h"
   "${CMAKE_SOURCE_DIR}/include/ccAPPS/solverexact.h"
+  "${CMAKE_SOURCE_DIR}/include/ccAPPS/solverautofix.h"
 )
 add_dependencies(solver model)
 if(CCAPPS_HAVE_ORTOOLS)

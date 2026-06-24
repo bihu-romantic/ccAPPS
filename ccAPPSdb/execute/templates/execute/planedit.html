@@ -137,9 +137,11 @@
 #save_undo, #toolicons { padding-left: 0 !important; padding-right: 0 !important; }
 /* Lighter toolbar buttons */
 #rg-zoom-in, #rg-zoom-out, #pe-gear-btn,
-#pe-top-save-btn, #pe-top-undo-btn { background: #ff9800; border-color: #ff9800; }
+#pe-top-save-btn, #pe-top-undo-btn,
+#pe-top-autofix-btn { background: #ff9800; border-color: #ff9800; }
 #rg-zoom-in:hover, #rg-zoom-out:hover, #pe-gear-btn:hover,
-#pe-top-save-btn:hover, #pe-top-undo-btn:hover { background: #fb8c00; border-color: #fb8c00; }
+#pe-top-save-btn:hover, #pe-top-undo-btn:hover,
+#pe-top-autofix-btn:hover { background: #fb8c00; border-color: #fb8c00; }
 
 .pe-tooltip {
   position: fixed; z-index: 99999; display: none; max-width: 380px;
@@ -153,6 +155,32 @@
 
 /* Gear button */
 .pe-gear-btn { }
+
+/* Auto-fix button */
+.pe-autofix-btn {
+  position: relative;
+  width: 34px; height: 34px; padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+.pe-autofix-icon { font-size: 13px; line-height: 1; display: inline-block; transform: rotate(-90deg); }
+.pe-autofix-slash {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: none;
+}
+.pe-autofix-slash::before {
+  content: ""; position: absolute;
+  top: 7px; left: 7px; right: 7px; bottom: 7px;
+  border: 2.5px solid #dc3545; border-radius: 50%;
+}
+.pe-autofix-slash::after {
+  content: ""; position: absolute;
+  top: 9px; left: 50%; width: 1.5px; height: calc(100% - 18px);
+  background: #dc3545; transform: rotate(45deg); transform-origin: center;
+}
+.pe-autofix-active .pe-autofix-slash { display: none; }
 
 /* Modal */
 
@@ -505,6 +533,7 @@ var _peEditBaseline = null;
 var _peResourceDirty = false;
 var _peLoadplansBaseline = null;
 var _peLocalProblems = [];
+var _peAutoFixScopeRefs = [];
 
 function _cloneEditState(opplan) {
     return {
@@ -552,6 +581,13 @@ function _getOpplanRef(opplan) {
 
 function _sameOpplanRef(a, b) {
     return String(a || "") === String(b || "");
+}
+
+function _rememberAutoFixScope(ref) {
+    ref = String(ref || "").trim();
+    if (!ref || _peAutoFixScopeRefs.indexOf(ref) >= 0) return;
+    _peAutoFixScopeRefs.push(ref);
+    if (_peAutoFixScopeRefs.length > 50) _peAutoFixScopeRefs = _peAutoFixScopeRefs.slice(-50);
 }
 
 function _fmtLocalDateTimeSeconds(d) {
@@ -731,6 +767,28 @@ function _setTopSaveDirty(isDirty) {
     _syncEditFieldHighlights();
 }
 
+function _autoFixConflicts() {
+    var btn = document.getElementById("pe-top-autofix-btn");
+    if (!btn || btn.classList.contains("pe-autofix-active")) return;
+    if (_peEditState && _peEditState.reference) _rememberAutoFixScope(_peEditState.reference);
+    btn.classList.add("pe-autofix-active");
+    var saveFirst = (_isEditStateDirty() || _peResourceDirty) ? _saveEditState(false) : Promise.resolve();
+    saveFirst.then(function() {
+        return fetch("/execute/autoresolve/", {
+            method: "POST",
+            headers: {"Content-Type": "application/json", "X-CSRFToken": _getCsrfToken()},
+            body: JSON.stringify({operationplans: _peAutoFixScopeRefs})
+        });
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.success) { alert(data.message); location.reload(); }
+        else { alert("冲突解决失败: " + (data.error || "未知错误")); }
+    })
+    .catch(function(err) { alert("请求失败: " + (err.message || err)); })
+    .finally(function() { btn.classList.remove("pe-autofix-active"); });
+}
+
 function _markOpplanDirty() {
     var saveBtn = document.getElementById("pe-save-btn");
     if (saveBtn) saveBtn.disabled = false;
@@ -826,9 +884,10 @@ function _setStatusFromBtn(btn, status) {
     });
 }
 
-function _saveEditState() {
-    if (!_peEditState || !_peEditState.reference) return;
-    if (!_isEditStateDirty() && !_peResourceDirty) return;
+function _saveEditState(reloadAfterSave) {
+    if (reloadAfterSave === undefined) reloadAfterSave = true;
+    if (!_peEditState || !_peEditState.reference) return Promise.resolve();
+    if (!_isEditStateDirty() && !_peResourceDirty) return Promise.resolve();
     var payload = [{
         id: _peEditState.reference,
         start: _normalizeDatetimePayload(_peEditState.start),
@@ -845,7 +904,7 @@ function _saveEditState() {
             ];
         })
     }];
-    fetch(url_prefix + "/operationplan/", {
+    return fetch(url_prefix + "/operationplan/", {
         method: "POST",
         credentials: "same-origin",
         headers: {
@@ -861,11 +920,12 @@ function _saveEditState() {
         });
     })
     .then(function() {
+        _rememberAutoFixScope(_peEditState.reference);
         _peEditBaseline = _cloneEditState(_peEditState);
         _captureLoadplansBaseline(_peSelectedOpplan);
         _setResourceDirty(false);
         _setTopSaveDirty(false);
-        location.reload();
+        if (reloadAfterSave) location.reload();
     })
     .catch(function(err) {
         _pushProblem("保存失败: " + (err.message || err), _nowDisplay(), "");
@@ -2459,6 +2519,7 @@ function _saveResourceReassign(state, newResource) {
         return resp.json();
     })
     .then(function() {
+        _rememberAutoFixScope(ref);
         _pushProblem("重新分配: " + oldResource + " → " + newResource + " (" + ref + ")", _nowDisplay(), "");
         // Update _peSelectedOpplan loadplans so Resources card reflects new assignment
         if (_peSelectedOpplan) {
@@ -3969,6 +4030,7 @@ function onTypeFilterChange() {
 
 {% block actions %}
 <div style="display:flex;align-items:center;justify-content:flex-end;width:100%;gap:4px">
+    <button id="pe-top-autofix-btn" class="btn pe-autofix-btn" onclick="_autoFixConflicts()" data-bs-toggle="tooltip" data-bs-placement="top" title="自动解决冲突"><span class="fa fa-wrench pe-autofix-icon"></span><span id="pe-autofix-slash" class="pe-autofix-slash"></span></button>
     <button class="btn btn-primary" id="rg-zoom-in" onclick="zoomCombinedGantt(1.3)" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="{% trans 'zoom in'|force_escape %}"><span class="fa fa-search-plus"></span></button>
     <button class="btn btn-primary" id="rg-zoom-out" onclick="zoomCombinedGantt(0.7)" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-title="{% trans 'zoom out'|force_escape %}"><span class="fa fa-search-minus"></span></button>
     <div style="position:relative;display:inline-block">

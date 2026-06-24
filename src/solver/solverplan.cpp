@@ -26,6 +26,7 @@
 #include "ccAPPS/solver.h"
 #include "ccAPPS/solveraco.h"
 #include "ccAPPS/solverexact.h"
+#include "ccAPPS/solverautofix.h"
 namespace ccAPPS {
 
 const MetaClass* SolverPropagateStatus::metadata;
@@ -57,6 +58,7 @@ void LibrarySolver::initialize() {
   nok += SolverCreate::initialize();
   nok += SolverACO::initialize();
   nok += SolverExact::initialize();
+  nok += SolverAutoFix::initialize();
   nok += OperatorDelete::initialize();
   nok += SolverPropagateStatus::initialize();
   if (nok) throw RuntimeException("Error registering new Python types");

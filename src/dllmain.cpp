@@ -28,6 +28,7 @@
 #include "ccAPPS/database.h"
 #include "ccAPPS/solveraco.h"
 #include "ccAPPS/solverexact.h"
+#include "ccAPPS/solverautofix.h"
 #include "ccAPPSinterface.h"
 using namespace ccAPPS;
 
@@ -64,6 +65,9 @@ void ccAPPSInitialize(bool procesInitializationFiles) {
     PythonInterpreter::registerGlobalMethod(
         "run_exact", run_exact, METH_NOARGS,
         "Run exact optimization on small bottleneck resource subproblems.");
+    PythonInterpreter::registerGlobalMethod(
+        "fix_conflicts", fix_conflicts, METH_NOARGS,
+        "Run heuristic auto-fix on planning conflicts.");
 
     // Initialize the forecast module
     int nok = 0;
