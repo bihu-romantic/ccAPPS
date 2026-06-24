@@ -43,6 +43,58 @@ using operations_research::MPSolver;
 using operations_research::MPVariable;
 #endif
 
+namespace {
+
+bool calendarHasPositiveValue(Calendar* cal, Date start, Date end) {
+  if (!cal || end <= start) return true;
+  Calendar::EventIterator iter(cal, start, true);
+  Date cur = start;
+  while (cur < end) {
+    Date next = iter.getDate();
+    if (next <= cur) {
+      if (iter.getValue() > 0.0) return true;
+      ++iter;
+      continue;
+    }
+    double value = iter.getPrevValue();
+    if (value > 0.0) return true;
+    if (next >= end) return false;
+    cur = next;
+    ++iter;
+  }
+  return false;
+}
+
+bool resourceCalendarsAvailable(const Resource* res, Date start, Date end,
+                                Duration required) {
+  if (!res || end <= start) return false;
+  if (required <= Duration(0L)) return true;
+  if (res->getAvailable(start, end) < required)
+    return false;
+  if (res->getMaximumCalendar() &&
+      !calendarHasPositiveValue(res->getMaximumCalendar(), start, end))
+    return false;
+  return true;
+}
+
+int bucketIndex(Date date, Date horizonStart, int bucketSeconds,
+                int bucketCount) {
+  long offset = (date - horizonStart).getSeconds();
+  if (offset <= 0) return 0;
+  return static_cast<int>(
+      min<long>(bucketCount - 1, offset / bucketSeconds));
+}
+
+int bucketEndIndex(Date date, Date horizonStart, int bucketSeconds,
+                   int bucketCount) {
+  long offset = (date - horizonStart).getSeconds();
+  if (offset <= 0) return 1;
+  long bucket = (offset + bucketSeconds - 1) / bucketSeconds;
+  return static_cast<int>(min<long>(bucketCount, max<long>(1, bucket)));
+}
+
+}  // namespace
+
 const MetaClass* SolverExact::metadata;
 
 // ==========================================================================
@@ -199,17 +251,29 @@ AntSolution SolverExact::solveTimeIndexedMIP(
   empty.fitness = -numeric_limits<double>::max();
 
 #ifndef HAVE_ORTOOLS
+  logger << indentlevel
+         << "Exact time-bucket MIP: unavailable (built without OR-Tools)\n";
   return empty;
 #else
-  if (resources.empty() || candidates.empty()) return empty;
-  if (candidates.size() > static_cast<size_t>(config_.max_operations))
+  if (resources.empty() || candidates.empty()) {
+    logger << indentlevel << "Exact time-bucket MIP: skip ("
+           << resources.size() << " resources, " << candidates.size()
+           << " candidates)\n";
     return empty;
+  }
+  if (candidates.size() > static_cast<size_t>(config_.max_operations)) {
+    logger << indentlevel << "Exact time-bucket MIP: skip ("
+           << candidates.size() << " candidates > "
+           << config_.max_operations << " max operations)\n";
+    return empty;
+  }
   int bucketSeconds = max(1, config_.time_bucket_seconds);
   Date current = Plan::instance().getCurrent();
   unordered_set<const Resource*> resourceSet;
   for (auto* r : resources) resourceSet.insert(r);
 
   unordered_set<const OperationPlan*> uniqueOps;
+  Date horizonStart = Date::infiniteFuture;
   Date horizonEnd = current;
   for (const auto& c : candidates) {
     if (!c.op || c.allResources.empty()) continue;
@@ -217,21 +281,44 @@ AntSolution SolverExact::solveTimeIndexedMIP(
     const Resource* durationResource =
         c.res ? c.res : c.allResources.front();
     Duration dur = estimateOperationDuration(c.op, durationResource);
+    Date candidateStart = c.earliestStart;
+    if (c.op->getStart() != Date::infinitePast &&
+        c.op->getStart() != Date::infiniteFuture &&
+        c.op->getStart() < candidateStart)
+      candidateStart = c.op->getStart();
+    if (candidateStart < horizonStart) horizonStart = candidateStart;
     Date candidateEnd = c.earliestStart + dur;
+    if (c.op->getEnd() != Date::infinitePast &&
+        c.op->getEnd() != Date::infiniteFuture &&
+        c.op->getEnd() > candidateEnd)
+      candidateEnd = c.op->getEnd();
     Demand* dmd = c.op->getTopOwner()->getDemand();
     if (dmd) {
       Date due = dmd->getDue();
       if (due != Date::infiniteFuture && due > candidateEnd)
         candidateEnd = due;
     }
-    candidateEnd += Duration(static_cast<long>(bucketSeconds) * 4L);
     if (candidateEnd > horizonEnd) horizonEnd = candidateEnd;
   }
-  if (uniqueOps.empty() || horizonEnd <= current) return empty;
+  if (horizonStart == Date::infiniteFuture || horizonStart < current)
+    horizonStart = current;
+  if (uniqueOps.empty() || horizonEnd <= horizonStart) {
+    logger << indentlevel
+           << "Exact time-bucket MIP: skip (empty operation set or horizon)\n";
+    return empty;
+  }
 
-  long horizonSeconds = (horizonEnd - current).getSeconds();
-  int bucketCount = static_cast<int>(
-      min<long>(max<long>(1, horizonSeconds / bucketSeconds + 1), 240L));
+  long horizonSeconds = (horizonEnd - horizonStart).getSeconds();
+  int bucketCount =
+      static_cast<int>(max<long>(1, horizonSeconds / bucketSeconds + 1));
+  logger << indentlevel << "Exact time-bucket MIP: horizon "
+         << horizonStart << " - " << horizonEnd << ", " << bucketCount
+         << " buckets of " << bucketSeconds << " seconds\n";
+  if (bucketCount > 10000) {
+    logger << indentlevel << "Exact time-bucket MIP: skip ("
+           << bucketCount << " buckets > 10000)\n";
+    return empty;
+  }
 
   // --- Build SCIP MIP ---
   MPSolver solver("ccapps_exact_time_bucket",
@@ -251,6 +338,10 @@ AntSolution SolverExact::solveTimeIndexedMIP(
   unordered_map<const OperationPlan*, vector<int>> opSlots;
   unordered_map<const Resource*, vector<vector<int>>> resourceBuckets;
   for (auto* r : resources) resourceBuckets[r].resize(bucketCount);
+  size_t calendarFilteredSlots = 0;
+  size_t horizonFilteredSlots = 0;
+  size_t duplicateSlots = 0;
+  unordered_set<string> seenSlots;
 
   for (const auto& c : candidates) {
     if (!c.op || c.allResources.empty()) continue;
@@ -261,12 +352,12 @@ AntSolution SolverExact::solveTimeIndexedMIP(
         1, static_cast<int>((dur.getSeconds() + bucketSeconds - 1) /
                             bucketSeconds));
     long earliestOffset = max<long>(
-        0, (c.earliestStart - current).getSeconds());
+        0, (c.earliestStart - horizonStart).getSeconds());
     int earliestBucket = static_cast<int>(
         min<long>(bucketCount - 1, earliestOffset / bucketSeconds));
 
     for (int b = earliestBucket; b + durationBuckets <= bucketCount; ++b) {
-      Date rawStart = current + Duration(static_cast<long>(b) * bucketSeconds);
+      Date rawStart = horizonStart + Duration(static_cast<long>(b) * bucketSeconds);
       Date start = rawStart;
       Date end = rawStart + dur;
       if (c.op->getOperation()) {
@@ -277,11 +368,47 @@ AntSolution SolverExact::solveTimeIndexedMIP(
       }
       if (start == Date::infiniteFuture || end == Date::infiniteFuture)
         continue;
+      if (end <= start || end > horizonEnd) {
+        ++horizonFilteredSlots;
+        continue;
+      }
+
+      bool calendarsAvailable = true;
+      for (auto* r : c.allResources) {
+        if (!resourceCalendarsAvailable(r, start, end, dur)) {
+          calendarsAvailable = false;
+          break;
+        }
+      }
+      if (!calendarsAvailable) {
+        ++calendarFilteredSlots;
+        continue;
+      }
+
+      int startBucket = bucketIndex(start, horizonStart, bucketSeconds,
+                                    bucketCount);
+      int endBucket =
+          bucketEndIndex(end, horizonStart, bucketSeconds, bucketCount);
+      if (endBucket <= startBucket) endBucket = startBucket + 1;
+      if (endBucket > bucketCount) {
+        ++horizonFilteredSlots;
+        continue;
+      }
+      string slotKey = to_string(c.candId) + "|" +
+                       to_string(static_cast<long long>(
+                           (start - horizonStart).getSeconds())) +
+                       "|" +
+                       to_string(static_cast<long long>(
+                           (end - horizonStart).getSeconds()));
+      if (!seenSlots.insert(slotKey).second) {
+        ++duplicateSlots;
+        continue;
+      }
 
       VarSlot slot;
       slot.candidate = &c;
-      slot.startBucket = b;
-      slot.durationBuckets = durationBuckets;
+      slot.startBucket = startBucket;
+      slot.durationBuckets = endBucket - startBucket;
       slot.start = start;
       slot.end = end;
       slot.var = solver.MakeBoolVar("");
@@ -292,17 +419,34 @@ AntSolution SolverExact::solveTimeIndexedMIP(
       for (auto* r : c.allResources) {
         if (!resourceSet.count(r)) continue;
         if (!resourceBuckets.count(r)) resourceBuckets[r].resize(bucketCount);
-        for (int k = b; k < b + durationBuckets && k < bucketCount; ++k)
+        for (int k = startBucket; k < endBucket && k < bucketCount; ++k)
           resourceBuckets[r][k].push_back(idx);
       }
     }
   }
-  if (slots.empty()) return empty;
+  logger << indentlevel << "Exact time-bucket MIP: filtered "
+         << calendarFilteredSlots << " calendar-infeasible slots, "
+         << horizonFilteredSlots << " horizon-overrun slots, "
+         << duplicateSlots << " duplicate slots\n";
+  if (slots.empty()) {
+    logger << indentlevel
+           << "Exact time-bucket MIP: skip (no feasible time slots across "
+           << uniqueOps.size() << " operations, " << bucketCount
+           << " buckets of " << bucketSeconds << " seconds)\n";
+    return empty;
+  }
 
   // Pick exactly one candidate/start bucket per operation.
   for (auto* op : uniqueOps) {
     auto it = opSlots.find(op);
-    if (it == opSlots.end() || it->second.empty()) return empty;
+    if (it == opSlots.end() || it->second.empty()) {
+      logger << indentlevel
+             << "Exact time-bucket MIP: skip (operation '"
+             << op->getOperation()->getName()
+             << "' has no feasible time slot in " << bucketCount
+             << " buckets of " << bucketSeconds << " seconds)\n";
+      return empty;
+    }
     MPConstraint* once = solver.MakeRowConstraint(1.0, 1.0);
     for (int idx : it->second) once->SetCoefficient(slots[idx].var, 1.0);
   }
@@ -376,7 +520,7 @@ AntSolution SolverExact::solveTimeIndexedMIP(
       if (fp->getDate() == Date::infiniteFuture) continue;
       if (fabs(fp->getQuantity()) <= ROUNDING_ERROR) continue;
 
-      long offset = (fp->getDate() - current).getSeconds();
+      long offset = (fp->getDate() - horizonStart).getSeconds();
       int bucket = offset <= 0
           ? 0
           : static_cast<int>(
@@ -387,7 +531,7 @@ AntSolution SolverExact::solveTimeIndexedMIP(
     double cumulativeExternal = 0.0;
     for (int bucket = 0; bucket < bucketCount; ++bucket) {
       cumulativeExternal += external[bucket];
-      Date bucketDate = current + Duration(
+      Date bucketDate = horizonStart + Duration(
           static_cast<long>(bucket) * static_cast<long>(bucketSeconds));
       double minimumInventory = buf->getMinimum();
       Calendar* minimumCalendar = buf->getMinimumCalendar();
