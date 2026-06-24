@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <functional>
 #include <unordered_set>
 
 #include "ccAPPS/solveraco.h"
@@ -441,38 +442,30 @@ Duration SolverACO::computeUpstreamWait(
 }
 
 // ==========================================================================
-// Helper: get all constrained resources an operation needs
+// Helper: expand constrained resource groups like MRP does
 // ==========================================================================
+
+static void collectQualifiedResources(const Resource* res, Skill* skill,
+                                      Date start, Date end,
+                                      vector<const Resource*>& result) {
+  if (!res || !res->getConstrained()) return;
+  if (res->isGroup()) {
+    for (auto m = res->getMembers(); m != Resource::end(); ++m)
+      collectQualifiedResources(&*m, skill, start, end, result);
+    return;
+  }
+  if (skill && !res->hasSkill(skill, start, end)) return;
+  if (find(result.begin(), result.end(), res) == result.end())
+    result.push_back(res);
+}
 
 vector<const Resource*> SolverACO::getConstrainedResources(
     const OperationPlan* op) const {
   vector<const Resource*> result;
   if (!op || !op->getOperation()) return result;
   for (const auto& ld : op->getOperation()->getLoads()) {
-    const Resource* ldRes = ld.getResource();
-    if (!ldRes || !ldRes->getConstrained()) continue;
-    if (ldRes->isGroup()) {
-      Skill* requiredSkill = ld.getSkill();
-      for (auto m = ldRes->getMembers(); m != Resource::end(); ++m) {
-        if (m->isGroup() || !m->getConstrained()) continue;
-        // Check skill: if the Load requires a specific skill, only
-        // include group members that possess it.
-        if (requiredSkill) {
-          bool hasSkill = false;
-          for (auto rs = m->getSkills();; ++rs) {
-            const ResourceSkill* rsk = &*rs;
-            if (!rsk) break;
-            if (rsk->getSkill() == requiredSkill) {
-              hasSkill = true; break;
-            }
-          }
-          if (!hasSkill) continue;
-        }
-        result.push_back(&*m);
-      }
-    } else {
-      result.push_back(ldRes);
-    }
+    collectQualifiedResources(ld.getResource(), ld.getSkill(), op->getStart(),
+                              op->getEnd(), result);
   }
   return result;
 }
@@ -501,51 +494,40 @@ vector<CandidateOp> SolverACO::buildCandidates(
       if (processed.count(op)) continue;
       processed.insert(op);
 
-      // Collect all constrained resources this operation could run on.
-      // Expand resource groups into individual child resources so ACO can
-      // choose the best machine within a pool.
-      unordered_set<const Resource*> altResources;
+      struct LoadAlternatives {
+        const Load* load;
+        vector<const Resource*> resources;
+      };
+      vector<LoadAlternatives> loadAlternatives;
       for (const auto& ld : op->getOperation()->getLoads()) {
-        const Resource* ldRes = ld.getResource();
-        if (!ldRes || !ldRes->getConstrained()) continue;
-
-        if (ldRes->isGroup()) {
-          // Expand resource group up to 3 levels to find individual machines
-          for (auto m1 = ldRes->getMembers(); m1 != Resource::end(); ++m1) {
-            if (m1->isGroup()) {
-              for (auto m2 = m1->getMembers(); m2 != Resource::end(); ++m2) {
-                if (m2->isGroup()) {
-                  for (auto m3 = m2->getMembers(); m3 != Resource::end(); ++m3)
-                    altResources.insert(&*m3);
-                } else {
-                  altResources.insert(&*m2);
-                }
-              }
-            } else {
-              altResources.insert(&*m1);
-            }
-          }
-        } else {
-          altResources.insert(ldRes);
-        }
+        vector<const Resource*> alternatives;
+        collectQualifiedResources(ld.getResource(), ld.getSkill(), op->getStart(),
+                                  op->getEnd(), alternatives);
+        if (alternatives.empty()) continue;
+        sort(alternatives.begin(), alternatives.end(),
+             [](const Resource* a, const Resource* b) {
+               if (a->getEfficiency() == b->getEfficiency())
+                 return a->getName() < b->getName();
+               return a->getEfficiency() > b->getEfficiency();
+             });
+        loadAlternatives.push_back({&ld, move(alternatives)});
       }
 
-      // Separate machines from operators (group members).
-      // Generate one candidate per operator so each has a fair chance.
-      if (!altResources.empty()) {
-        vector<const Resource*> machines, operators;
-        for (auto* r : altResources) {
-          // A resource is an operator if it has a parent (owner)
-          if (r->getOwner() && r->getOwner() != r) operators.push_back(r);
-          else machines.push_back(r);
-        }
-        if (!operators.empty()) {
-          for (auto* oper : operators) {
+      if (!loadAlternatives.empty()) {
+        vector<pair<const Load*, const Resource*>> currentAssignments;
+        vector<const Resource*> currentResources;
+        size_t generatedForOp = 0;
+
+        function<void(size_t)> buildCombinations = [&](size_t idx) {
+          if (generatedForOp >=
+              static_cast<size_t>(config_.max_candidate_combinations_per_op))
+            return;
+          if (idx == loadAlternatives.size()) {
             CandidateOp c;
             c.op = op;
-            c.allResources = machines;
-            c.allResources.push_back(oper);
-            c.res = oper;
+            c.allResources = currentResources;
+            c.loadAssignments = currentAssignments;
+            c.res = !c.allResources.empty() ? c.allResources.back() : res;
             Date eStart = Plan::instance().getCurrent();
             for (auto* r : c.allResources) {
               Date rStart = earliestStart(op, r);
@@ -554,23 +536,50 @@ vector<CandidateOp> SolverACO::buildCandidates(
             c.earliestStart = eStart;
             c.candId = nextId++;
             candidates.push_back(c);
+            ++generatedForOp;
+            return;
           }
-          processed.insert(op); continue; // skip outer ++nextId
-        } else {
-          CandidateOp c;
-          c.op = op;
-          c.allResources = machines;
-          c.res = c.allResources[0];
-          Date eStart = Plan::instance().getCurrent();
-          for (auto* r : c.allResources) {
-            Date rStart = earliestStart(op, r);
-            if (rStart > eStart) eStart = rStart;
+
+          const auto& alt = loadAlternatives[idx];
+          for (auto* altRes : alt.resources) {
+            bool alreadyAssigned = false;
+            if (alt.load->getResource() && alt.load->getResource()->isGroup() &&
+                Plan::instance().getIndividualPoolResources()) {
+              for (auto* r : currentResources) {
+                if (r == altRes) {
+                  alreadyAssigned = true;
+                  break;
+                }
+              }
+            }
+            if (alreadyAssigned) continue;
+
+            currentAssignments.push_back({alt.load, altRes});
+            if (find(currentResources.begin(), currentResources.end(), altRes) ==
+                currentResources.end())
+              currentResources.push_back(altRes);
+            buildCombinations(idx + 1);
+            currentAssignments.pop_back();
+            bool stillUsed = false;
+            for (const auto& assignment : currentAssignments) {
+              if (assignment.second == altRes) {
+                stillUsed = true;
+                break;
+              }
+            }
+            if (!stillUsed)
+              currentResources.erase(
+                  remove(currentResources.begin(), currentResources.end(), altRes),
+                  currentResources.end());
           }
-          c.earliestStart = eStart;
-          c.candId = nextId;
-          candidates.push_back(c);
-        }
-      } else {
+        };
+
+        size_t before = candidates.size();
+        buildCombinations(0);
+        if (candidates.size() > before) continue;
+      }
+
+      {
         CandidateOp c;
         c.op = op;
         c.res = res;
@@ -1325,7 +1334,9 @@ static void collectResourcePlans(const Resource* res,
   auto loadplans = res->getLoadPlans();
   for (auto it = loadplans.begin(); it != loadplans.end(); ++it) {
     OperationPlan* op = it->getOperationPlan();
-    if (op && op->getQuantity() > 0.0) {
+    if (op && op->getOperation() && op->getQuantity() > 0.0 &&
+        !op->getOperation()->hasType<OperationItemSupplier,
+                                     OperationItemDistribution>()) {
       bool found = false;
       for (const auto& e : plans) if (e == op) { found = true; break; }
       if (!found) plans.push_back(op);
@@ -1387,7 +1398,10 @@ void SolverACO::solveJoint(const vector<const Resource*>& resources) {
 
   // Build candidate pool (factor 1: multi-resource)
   vector<CandidateOp> candidates = buildCandidates(resources);
-  if (candidates.size() < 2) return;
+  if (getLogLevel() >= 0)
+    logger << indentlevel << "ACO joint: " << candidates.size()
+           << " candidates across " << resources.size() << " resources\n";
+  if (candidates.empty()) return;
 
   for (auto* res : resources)
     if (pheromones_.find(res) == pheromones_.end()) initPheromone(res);
@@ -1440,7 +1454,7 @@ void SolverACO::solveJoint(const vector<const Resource*>& resources) {
 // ==========================================================================
 
 void SolverACO::solve(void* v) {
-  // Collect all constrained resources with ≥2 operation plans.
+  // Collect constrained resources that have at least 1 manufacturing plan.
   // Extracted as a lambda so the bottleneck set can be refreshed after each
   // MRP pass (MRP may create new supply ops, change resource assignments,
   // or update material availability dates).
@@ -1454,7 +1468,7 @@ void SolverACO::solve(void* v) {
           if (!m->isGroup() && m->getConstrained()) {
             vector<OperationPlan*> plans;
             collectResourcePlans(&*m, plans);
-            if (plans.size() >= 2) {
+            if (!plans.empty()) {
               bn.push_back(&*m);
               activeGroups.insert(&*res);
             }
@@ -1463,7 +1477,7 @@ void SolverACO::solve(void* v) {
       } else {
         vector<OperationPlan*> plans;
         collectResourcePlans(&*res, plans);
-        if (plans.size() >= 2) bn.push_back(&*res);
+        if (!plans.empty()) bn.push_back(&*res);
       }
     }
     // Include ALL constrained members of active groups
@@ -1493,7 +1507,7 @@ vector<const Resource*> bottleneck = collectBottlenecks();
   }
 
   // ---- Phase 1: ACO optimization ----
-  if (bottleneck.size() >= 2 && config_.joint_optimization)
+  if (config_.joint_optimization)
     solveJoint(bottleneck);
   else if (bottleneck.size() == 1)
     solve(bottleneck[0], v);
