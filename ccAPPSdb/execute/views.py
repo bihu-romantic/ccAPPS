@@ -65,6 +65,7 @@ from django.contrib import messages
 from django.utils.encoding import force_str
 from django.utils.text import capfirst
 from django.core.management import get_commands, call_command
+from django.core.exceptions import PermissionDenied, ValidationError
 
 from ccAPPSdb import __version__
 from ccAPPSdb.admin import data_site
@@ -91,10 +92,45 @@ from .models import Task, ScheduledTask, DataExport
 from .management.commands.runworker import launchWorker
 from .management.commands.runplan import parseConstraints, constraintString
 from .management.commands.scheduletasks import scheduler
+from .services.ccpl_adapter import PlanningServiceError, run_ccpl_plan
 
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+@csrf_exempt
+def CCPLPlanAPI(request):
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    if not request.user.is_authenticated:
+        return JsonResponse(
+            {"status": "error", "message": "Authentication required"}, status=401
+        )
+    if not request.user.has_perm("auth.auth.generate_plan"):
+        return JsonResponse(
+            {"status": "error", "message": "Missing generate_plan permission"},
+            status=403,
+        )
+
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+        database = payload.get("scenario") or request.database
+        result = run_ccpl_plan(payload, database=database, user=request.user)
+        return JsonResponse(result, json_dumps_params={"ensure_ascii": False})
+    except json.JSONDecodeError:
+        return JsonResponse(
+            {"status": "error", "message": "Invalid JSON request body"}, status=400
+        )
+    except ValidationError as exc:
+        return JsonResponse(
+            {"status": "error", "message": "; ".join(exc.messages)}, status=400
+        )
+    except PermissionDenied as exc:
+        return JsonResponse({"status": "error", "message": str(exc)}, status=403)
+    except PlanningServiceError as exc:
+        logger.exception("CCPL planning service failed")
+        return JsonResponse({"status": "error", "message": str(exc)}, status=500)
 
 
 class TaskReport(GridReport):

@@ -79,6 +79,7 @@ if mode == "WSGI":
             name="execute_delete_log",
         ),
         re_path(r"^execute/api/(.+)/$", views.APITask, name="execute_api"),
+        re_path(r"^api/ccpl/plan/$", views.CCPLPlanAPI, name="ccpl_plan_api"),
         re_path(
             r"^execute/uploadtofolder/(.+)/$",
             views.FileManager.uploadFiletoFolder,
